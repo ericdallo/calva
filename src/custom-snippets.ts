@@ -4,21 +4,83 @@ import * as util from './utilities';
 import * as getText from './util/get-text';
 import * as namespace from './namespace';
 import * as outputWindow from './results-output/results-doc';
-import { customREPLCommandSnippet } from './evaluate';
 import { getConfig } from './config';
 import * as replSession from './nrepl/repl-session';
-import * as evaluate from './evaluate';
+import evaluate from './evaluate';
 import * as state from './state';
+import { getStateValue } from '../out/cljs-lib/cljs-lib';
 
-async function evaluateCustomCodeSnippetCommand(codeOrKey?: string) {
-  await evaluateCodeOrKey(codeOrKey);
+export type CustomREPLCommandSnippet = {
+  name: string;
+  key?: string;
+  snippet: string;
+  repl?: string;
+  ns?: string;
+};
+
+type SnippetDefinition = {
+  snippet: string;
+  ns: string;
+  repl: string;
+  evaluationSendCodeToOutputWindow?: boolean;
+};
+
+export function evaluateCustomCodeSnippetCommand(codeOrKeyOrSnippet?: string | SnippetDefinition) {
+  evaluateCodeOrKeyOrSnippet(codeOrKeyOrSnippet).catch((err) => {
+    console.log('Failed to run snippet', err);
+  });
 }
 
-async function evaluateCodeOrKey(codeOrKey?: string) {
+async function evaluateCodeOrKeyOrSnippet(codeOrKeyOrSnippet?: string | SnippetDefinition) {
+  if (!getStateValue('connected')) {
+    void vscode.window.showErrorMessage('Not connected to a REPL');
+    return;
+  }
   const editor = util.getActiveTextEditor();
-  const currentLine = editor.selection.active.line;
-  const currentColumn = editor.selection.active.character;
-  const currentFilename = editor.document.fileName;
+  const [editorNS, _] =
+    editor && editor.document && editor.document.languageId === 'clojure'
+      ? namespace.getNamespace(editor.document, editor.selection.active)
+      : undefined;
+  const editorRepl =
+    editor && editor.document && editor.document.languageId === 'clojure'
+      ? replSession.getReplSessionTypeFromState()
+      : 'clj';
+  const snippetDefinition: SnippetDefinition =
+    typeof codeOrKeyOrSnippet !== 'string' && codeOrKeyOrSnippet !== undefined
+      ? codeOrKeyOrSnippet
+      : await getSnippetDefinition(codeOrKeyOrSnippet as string, editorNS, editorRepl);
+
+  snippetDefinition.ns = snippetDefinition.ns ?? editorNS;
+  snippetDefinition.repl = snippetDefinition.repl ?? editorRepl;
+  snippetDefinition.evaluationSendCodeToOutputWindow =
+    snippetDefinition.evaluationSendCodeToOutputWindow ?? true;
+
+  const options = {};
+
+  options['evaluationSendCodeToOutputWindow'] = snippetDefinition.evaluationSendCodeToOutputWindow;
+  // don't allow addToHistory if we don't show the code but are inside the repl
+  options['addToHistory'] =
+    state.extensionContext.workspaceState.get('outputWindowActive') &&
+    !snippetDefinition.evaluationSendCodeToOutputWindow
+      ? false
+      : undefined;
+
+  const context = makeContext(editor, snippetDefinition.ns, editorNS, snippetDefinition.repl);
+  await evaluateCodeInContext(editor, snippetDefinition.snippet, context, options);
+}
+
+async function evaluateCodeInContext(
+  editor: vscode.TextEditor,
+  code: string,
+  context: any,
+  options: any
+) {
+  const result = await evaluateSnippet(editor, code, context, options);
+  outputWindow.appendPrompt();
+  return result;
+}
+
+async function getSnippetDefinition(codeOrKey: string, editorNS: string, editorRepl: string) {
   const configErrors: { name: string; keys: string[] }[] = [];
   const globalSnippets = getConfig().customREPLCommandSnippetsGlobal;
   const workspaceSnippets = getConfig().customREPLCommandSnippetsWorkspace;
@@ -34,15 +96,7 @@ async function evaluateCodeOrKey(codeOrKey?: string) {
   const snippetsDict = {};
   const snippetsKeyDict = {};
   const snippetsMenuItems: string[] = [];
-  const editorNS =
-    editor && editor.document && editor.document.languageId === 'clojure'
-      ? namespace.getNamespace(editor.document)
-      : undefined;
-  const editorRepl =
-    editor && editor.document && editor.document.languageId === 'clojure'
-      ? replSession.getReplSessionTypeFromState()
-      : 'clj';
-  snippets.forEach((c: customREPLCommandSnippet) => {
+  snippets.forEach((c: CustomREPLCommandSnippet) => {
     const undefs = ['name', 'snippet'].filter((k) => {
       return !c[k];
     });
@@ -70,11 +124,11 @@ async function evaluateCodeOrKey(codeOrKey?: string) {
 
   let pick: string;
   if (codeOrKey === undefined) {
-    // Without codeOrKey always show snippets menu
+    // Called without args, show snippets menu
     if (snippetsMenuItems.length > 0) {
       try {
         pick = await util.quickPickSingle({
-          values: snippetsMenuItems,
+          values: snippetsMenuItems.map((a) => ({ label: a })),
           placeHolder: 'Choose a command to run at the REPL',
           saveAs: 'runCustomREPLCommand',
         });
@@ -86,93 +140,85 @@ async function evaluateCodeOrKey(codeOrKey?: string) {
       }
     }
     if (pick === undefined) {
-      outputWindow.append(
+      outputWindow.appendLine(
         '; No snippets configured. Configure snippets in `calva.customREPLCommandSnippets`.'
       );
       return;
     }
   }
+
   if (pick === undefined) {
     // still no pick, but codeOrKey might be one
     pick = snippetsKeyDict[codeOrKey];
   }
-  const code = pick !== undefined ? snippetsDict[pick].snippet : codeOrKey;
-  const ns = pick !== undefined ? snippetsDict[pick].ns : editorNS;
-  const repl = pick !== undefined ? snippetsDict[pick].repl : editorRepl;
 
-  const options = {};
-
-  if (pick !== undefined) {
-    options['evaluationSendCodeToOutputWindow'] =
-      snippetsDict[pick].evaluationSendCodeToOutputWindow;
-    // don't allow addToHistory if we don't show the code but are inside the repl
-    options['addToHistory'] =
-      state.extensionContext.workspaceState.get('outputWindowActive') &&
-      !snippetsDict[pick].evaluationSendCodeToOutputWindow
-        ? false
-        : undefined;
-  }
-
-  const context = {
-    currentLine,
-    currentColumn,
-    currentFilename,
-    ns,
-    repl,
-    selection: editor.document.getText(editor.selection),
-    currentForm: getText.currentFormText(editor?.document, editor?.selection.active)[1],
-    enclosingForm: getText.currentEnclosingFormText(editor.document, editor?.selection.active)[1],
-    topLevelForm: getText.currentTopLevelFormText(editor?.document, editor?.selection.active)[1],
-    currentFn: getText.currentFunction(editor?.document)[1],
-    topLevelDefinedForm: getText.currentTopLevelFunction(
-      editor?.document,
-      editor?.selection.active
-    )[1],
-    head: getText.toStartOfList(editor?.document)[1],
-    tail: getText.toEndOfList(editor?.document)[1],
-    ...getText.currentContext(editor.document, editor.selection.active),
-  };
-  const result = await evaluateSnippet({ snippet: code }, context, options);
-
-  outputWindow.appendPrompt();
-
-  return result;
+  return pick !== undefined ? snippetsDict[pick] : { snippet: codeOrKey };
 }
 
-async function evaluateSnippet(snippet, context, options) {
-  const code = snippet.snippet;
-  const ns = snippet.ns ?? context.ns;
-  const repl = snippet.repl ?? context.repl;
-  const interpolatedCode = interpolateCode(code, context);
+export function makeContext(editor: vscode.TextEditor, ns: string, editorNS: string, repl: string) {
+  return {
+    currentLine: editor.selection.active.line,
+    currentColumn: editor.selection.active.character,
+    currentFilename: editor.document.fileName,
+    ns,
+    editorNS,
+    repl,
+    selection: editor.document.getText(editor.selection),
+    selectionWithBracketTrail: getText.selectionAddingBrackets(
+      editor.document,
+      editor.selection.active
+    ),
+    currentFileText: getText.currentFileText(editor.document),
+    ...(editor.document.languageId === 'clojure'
+      ? getText.currentClojureContext(editor.document, editor.selection.active)
+      : {}),
+  };
+}
+
+export async function evaluateSnippet(editor: vscode.TextEditor, code, context, options) {
+  const ns = context.ns;
+  const repl = context.repl;
+  const interpolatedCode = interpolateCode(editor, code, context);
   return await evaluate.evaluateInOutputWindow(interpolatedCode, repl, ns, options);
 }
 
-function interpolateCode(code: string, context): string {
-  return code
+function interpolateCode(editor: vscode.TextEditor, code: string, context): string {
+  const interpolateCode = code
     .replace(/\$line/g, context.currentLine)
     .replace(/\$hover-line/g, context.hoverLine)
     .replace(/\$column/g, context.currentColumn)
     .replace(/\$hover-column/g, context.hoverColumn)
-    .replace(/\$file/g, context.currentFilename)
-    .replace(/\$hover-file/g, context.hoverFilename)
+    .replace(/\$file-text/g, context.currentFileText[1])
+    .replace(/\$file/g, context.currentFilename?.replace(/\\/g, '\\\\') ?? '')
+    .replace(/\$hover-file-text/g, context.hovercurrentFileText?.[1] ?? '')
+    .replace(/\$hover-file/g, context.hoverFilename?.replace(/\\/g, '\\\\') ?? '')
     .replace(/\$ns/g, context.ns)
+    .replace(/\$editor-ns/g, context.editorNS)
     .replace(/\$repl/g, context.repl)
+    .replace(/\$selection-closing-brackets/g, context.selectionWithBracketTrail?.[1])
     .replace(/\$selection/g, context.selection)
-    .replace(/\$hover-text/g, context.hoverText)
-    .replace(/\$current-form/g, context.currentForm)
-    .replace(/\$enclosing-form/g, context.enclosingForm)
-    .replace(/\$top-level-form/g, context.topLevelForm)
-    .replace(/\$current-fn/g, context.currentFn)
-    .replace(/\$top-level-defined-symbol/g, context.topLevelDefinedForm)
-    .replace(/\$head/g, context.head)
-    .replace(/\$tail/g, context.tail)
-    .replace(/\$hover-current-form/g, context.hovercurrentForm)
-    .replace(/\$hover-enclosing-form/g, context.hoverenclosingForm)
-    .replace(/\$hover-top-level-form/g, context.hovertopLevelForm)
-    .replace(/\$hover-current-fn/g, context.hovercurrentFn)
-    .replace(/\$hover-top-level-defined-symbol/g, context.hovertopLevelDefinedForm)
-    .replace(/\$hover-head/g, context.hoverhead)
-    .replace(/\$hover-tail/g, context.hovertail);
+    .replace(/\$hover-text/g, context.hoverText);
+  if (editor.document.languageId !== 'clojure') {
+    return interpolateCode;
+  } else {
+    return interpolateCode
+      .replace(/\$current-form/g, context.currentForm[1])
+      .replace(/\$current-pair/g, context.currentPair[1])
+      .replace(/\$enclosing-form/g, context.enclosingForm[1])
+      .replace(/\$top-level-form/g, context.topLevelForm[1])
+      .replace(/\$current-fn/g, context.currentFn[1])
+      .replace(/\$top-level-fn/g, context.topLevelFn[1])
+      .replace(/\$top-level-defined-symbol/g, context.topLevelDefinedForm?.[1] ?? '')
+      .replace(/\$head/g, context.head[1])
+      .replace(/\$tail/g, context.tail[1])
+      .replace(/\$hover-current-form/g, context.hovercurrentForm?.[1] ?? '')
+      .replace(/\$hover-current-pair/g, context.hovercurrentPair?.[1] ?? '')
+      .replace(/\$hover-enclosing-form/g, context.hoverenclosingForm?.[1] ?? '')
+      .replace(/\$hover-top-level-form/g, context.hovertopLevelForm?.[1] ?? '')
+      .replace(/\$hover-current-fn/g, context.hovercurrentFn?.[1] ?? '')
+      .replace(/\$hover-current-fn/g, context.hovertopLevelFn?.[1] ?? '')
+      .replace(/\$hover-top-level-defined-symbol/g, context.hovertopLevelDefinedForm?.[1] ?? '')
+      .replace(/\$hover-head/g, context.hoverhead?.[1] ?? '')
+      .replace(/\$hover-tail/g, context.hovertail?.[1] ?? '');
+  }
 }
-
-export { evaluateCustomCodeSnippetCommand, evaluateSnippet };

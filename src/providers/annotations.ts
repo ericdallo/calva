@@ -51,16 +51,9 @@ function evaluated(contentText, hoverText, hasError) {
       after: {
         contentText: contentText.replace(/ /g, '\u00a0'),
         overflow: 'hidden',
-      },
-      light: {
-        after: {
-          color: hasError ? 'rgb(255, 127, 127)' : 'black',
-        },
-      },
-      dark: {
-        after: {
-          color: hasError ? 'rgb(255, 175, 175)' : 'white',
-        },
+        color: hasError
+          ? new vscode.ThemeColor('calva.inlineErrorForegroundColor')
+          : new vscode.ThemeColor('calva.inlineForegroundColor'),
       },
     },
   };
@@ -116,6 +109,7 @@ function clearAllEvaluationDecorations() {
   vscode.window.visibleTextEditors.forEach((editor) => {
     clearEvaluationDecorations(editor);
   });
+  void vscode.commands.executeCommand('setContext', 'calva:hasInlineResults', false);
 }
 
 function decorateResults(
@@ -135,6 +129,7 @@ function decorateResults(
   decoration['range'] = new vscode.Selection(codeSelection.end, codeSelection.end);
   decorationRanges.push(decoration);
   setResultDecorations(editor, decorationRanges);
+  void vscode.commands.executeCommand('setContext', 'calva:hasInlineResults', true);
 }
 
 function decorateSelection(

@@ -6,15 +6,15 @@ _Distilled from [CIDER](https://cider.mx/)*._
 
 Welcome to [Calva](https://marketplace.visualstudio.com/items?itemName=betterthantomorrow.calva), an integrated, REPL powered, development environment for enjoyable and productive [Clojure](https://clojure.org) and [ClojureScript](https://clojurescript.org) programming in [Visual Studio Code](https://code.visualstudio.com). It includes:
 
-* inline [code evaluation](https://calva.io/evaluation.md)
-* [structural editing](https://calva.io/paredit.md)
-* code [formatting](https://calva.io/formatting.md)
+* inline [code evaluation](https://calva.io/evaluation/)
+* [structural editing](https://calva.io/paredit/)
+* code [formatting](https://calva.io/formatting/)
 * code navigation
-* a [debugger](ttps://calva.io/debugger.md)
-* [linting](https://calva.io/linting.md)
+* a [debugger](https://calva.io/debugger/)
+* [linting](https://calva.io/linting/)
 * syntax highlighting
 * Clojure aware rainbow brackets
-* a [test runner](https://calva.io/test-runner.md)
+* a [test runner](https://calva.io/test-runner/)
 * refactoring support
 * and much more.
 
@@ -27,13 +27,13 @@ A lot of effort has been put into making Calva a good choice to start if you are
 Crispin Bennett's review:
 > This is great, and makes VS Code a truly viable IDE/editor for clojure development. It has great REPL support (including inline evaluation), an extensive Paredit implementation, and excellent linting (care of the bundled clj-kondo). Calva is being improved on at an impressive clip by maintainers who appear solidly committed to its ongoing development. It's well-documented, and manages to be both approachable and capable. A no-brainer if you're already a VS Code user, and well worth a look if you're not.
 
-## It's Easy to get Started
+## It's Easy to Get Started
 
-https://www.youtube.com/embed/O6GrXXhCzCc
+[Get Started with Clojure in VS Code in 20 seconds](https://www.youtube.com/embed/O6GrXXhCzCc)
 
 ## There is Documentation
 
-Head over to https://calva.io/ to learn more about how to use Calva. The most important stuff would be:
+Head over to [calva.io](https://calva.io/) to learn more about how to use Calva. The most important stuff would be:
 
 * [Connect Calva to Your Project](https://calva.io/connect/) (TL;DR; Use **Jack in**.)
 * [Quirks](https://calva.io/quirks/) (Yes, there are quirks.)
@@ -64,7 +64,7 @@ Go to the [documentation](https://calva.io/) to find info on how to connect Calv
   * Highlights misplaced brackets
   * LISP friendly bracket matching
   * Ignore form (`#_`) dimming and `(comment)` form highlighting
-* Code formatting and autoindent according to https://github.com/bbatsov/clojure-style-guide
+* Code formatting and autoindent according to [The Clojure Style Guide](https://github.com/bbatsov/clojure-style-guide)
 * Structural Editing (via [Paredit](https://calva.io/paredit/))
 * [Linting](https://calva.io/linting/)
 * Intellisense
@@ -77,7 +77,7 @@ Go to the [documentation](https://calva.io/) to find info on how to connect Calv
 * View doc strings on hover
 * View function signatures on hover, including help with knowing which argument you are typing
 * [Debugger](https://calva.io/debugger/)
-* Support for [Clojure tools/deps](https://clojure.org/guides/deps_and_cli), [Leiningen](https://leiningen.org), [shadow-cljs](http://shadow-cljs.org), [Figwheel Main](https://figwheel.org), [lein-figwheel](https://github.com/bhauman/lein-figwheel), and the built-in ClojureScript browser/node repls. (For [Boot](https://boot-clj.com), only Connect scenarios work, there is no Jack-in there.)
+* Support for [Clojure tools/deps](https://clojure.org/guides/deps_and_cli), [Leiningen](https://leiningen.org), [shadow-cljs](http://shadow-cljs.org), [Figwheel Main](https://figwheel.org), [lein-figwheel](https://github.com/bhauman/lein-figwheel), [Clojurephant](https://github.com/clojurephant/clojurephant) (Gradle) and the built-in ClojureScript browser/node repls. (For [Boot](https://boot-clj.com), only Connect scenarios work, there is no Jack-in there.)
 * Your [Custom Connect Sequences](https://calva.io/connect-sequences/), including fully customized ClojureScript REPLs.
 * Switch the ClojureScript REPL connection between your different builds at will.
 * When editing `cljc` files, easily choose if REPL commands should go to the `clj` or `cljs` REPL by clicking the `cljc/clj[s]` indicator in the status bar.
@@ -85,7 +85,7 @@ Go to the [documentation](https://calva.io/) to find info on how to connect Calv
 
 ### Powered in Part by Clojure-lsp
 
-Calva uses a mix of static and dynamic analysis to power the experience. A lot of the static abilities come from [clojure-lsp](https://github.com/snoe/clojure-lsp), and you can read more about [Calva's integration of clojure-lsp](https://calva.io/clojure-lsp/) in the documentation.
+Calva uses a mix of static and dynamic analysis to power the experience. A lot of the static abilities come from [clojure-lsp](https://github.com/clojure-lsp/clojure-lsp), and you can read more about [Calva's integration of clojure-lsp](https://calva.io/clojure-lsp/) in the documentation.
 
 ### Demo: Evaluate top level forms inside `(comment...)`
 
@@ -144,10 +144,10 @@ I'm glad you are reading this section! There are many ways and you are welcome t
 
 A considerable amount of time, creativity, energy, worries, sweat, and tears (well, no tears, but anyway 😄), is being spent on Calva. Please consider sponsoring us to show us that extra level of appreciation. Here are the ways you can do it:
 
-* [Peter Strömberg](https://github.com/sponsors/PEZ)
-* [Brandon Ringe](https://github.com/sponsors/bpringe)
-* [Cora Sutton](https://github.com/sponsors/corasaurus-hex)
-* [Lukas Domagala](https://github.com/sponsors/Cyrik)
+* Sponsor [Peter Strömberg](https://github.com/sponsors/PEZ)
+* Sponsor [Brandon Ringe](https://github.com/sponsors/bpringe)
+* Sponsor [Cora Sutton](https://github.com/sponsors/corasaurus-hex)
+* Sponsor [Lukas Domagala](https://github.com/sponsors/Cyrik)
 
 Please see [this statement from Cognitect](https://cognitect.com/blog/2020/12/15/sponsoring-open-source-developers) about the importance of supporting open source developers.
 
@@ -165,7 +165,7 @@ Patrons, Gold, and Silver sponsors are also displayed here: https://calva.io/#sp
 
 [<img src="https://liftoff.io/wp-content/themes/liftoff/images/logo-blue.png" height="40px" alt="Liftoff"/>](https://liftoff.io)
 [<img src="assets/images/cognitect-logo.jpg" height="40px" alt="Cognitect"/>](https://cognitect.com)
-[<img src="assets/images/thortech-solutions.png" height="40px" alt="ThorTech Solutions"/>](https://cognitect.com)
+[<img src="assets/images/thortech-solutions.png" height="40px" alt="ThorTech Solutions"/>](https://www.thortech-solutions.com/)
 
 ### Calva Silver Sponsors
 

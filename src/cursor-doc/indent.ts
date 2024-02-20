@@ -1,5 +1,9 @@
 import { EditableModel } from './model';
 import * as _ from 'lodash';
+import * as regexUtil from '../util/regex';
+import { FormatterConfig } from '../formatter-config';
+import * as cljsLib from '../../out/cljs-lib/cljs-lib.js';
+import { escapeStringRegexp } from '../util/string';
 
 const whitespace = new Set(['ws', 'comment', 'eol']);
 
@@ -48,7 +52,7 @@ export interface IndentInformation {
 export function collectIndents(
   document: EditableModel,
   offset: number,
-  config: any,
+  config: FormatterConfig,
   maxDepth: number = 3,
   maxLines: number = 20
 ): IndentInformation[] {
@@ -60,7 +64,27 @@ export function collectIndents(
   let lastLine = cursor.line;
   let lastIndent = 0;
   const indents: IndentInformation[] = [];
-  const rules = config['cljfmt-options']['indents'];
+  const replaceIndents = config['cljfmt-options']['indents'];
+  const defaultIndents = cljsLib.defaultIndents();
+  const extraIndents = config['cljfmt-options']['extra-indents'];
+  const baseRules = replaceIndents
+    ? Object.keys(replaceIndents).map((k) => [k, replaceIndents[k]])
+    : Object.keys(defaultIndents).map((k) => [k, defaultIndents[k]]);
+  const extraRules = extraIndents ? Object.keys(extraIndents).map((k) => [k, extraIndents[k]]) : [];
+
+  const combinedRules = [...extraRules, ...baseRules].sort((a, b) => {
+    const aIsRegex = regexUtil.isCljOrJsRegex(a[0]);
+    const bIsRegex = regexUtil.isCljOrJsRegex(b[0]);
+
+    if (aIsRegex && !bIsRegex) {
+      return 1;
+    } else if (!aIsRegex && bIsRegex) {
+      return -1;
+    } else {
+      return 0;
+    }
+  });
+
   do {
     if (!cursor.backwardSexp()) {
       // this needs some work..
@@ -91,8 +115,14 @@ export function collectIndents(
 
       const pattern =
         isList &&
-        _.find(_.keys(rules), (pattern) => pattern === token || testCljRe(pattern, token));
-      const indentRule = pattern ? rules[pattern] : [];
+        _.find(
+          combinedRules,
+          (rule) =>
+            regexUtil.testCljOrJsRegex(`#"^(.*/)?${[escapeStringRegexp(rule[0])]}$"`, token) ||
+            (regexUtil.isCljOrJsRegex(rule[0]) && regexUtil.testCljOrJsRegex(rule[0], token))
+        );
+
+      const indentRule = pattern ? pattern[1] : [];
       indents.unshift({
         first: token,
         rules: indentRule,
@@ -138,59 +168,84 @@ export function collectIndents(
   return indents;
 }
 
-const testCljRe = (re, str) => {
-  const matches = re.match(/^#"(.*)"$/);
-  return matches && RegExp(matches[1]).test(str);
+const calculateDefaultIndent = (indentInfo: IndentInformation) =>
+  indentInfo.exprsOnLine > 0 ? indentInfo.firstItemIdent : indentInfo.startIndent;
+
+const calculateInnerIndent = (
+  currentIndent: number,
+  rule: IndentRule,
+  indentInfo: IndentInformation
+) => {
+  if (rule.length !== 3 || rule[2] > indentInfo.argPos) {
+    return indentInfo.startIndent + 1;
+  }
+
+  return currentIndent;
+};
+
+const calculateBlockIndent = (
+  currentIndent: number,
+  rule: IndentRule,
+  indentInfo: IndentInformation
+) => {
+  if (indentInfo.exprsOnLine > rule[1]) {
+    return indentInfo.firstItemIdent;
+  }
+
+  if (indentInfo.argPos >= rule[1]) {
+    return indentInfo.startIndent + 1;
+  }
+
+  return currentIndent;
+};
+
+const calculateIndent = (
+  currentIndent: number,
+  rule: IndentRule,
+  indentInfo: IndentInformation,
+  stateSize: number,
+  pos: number
+) => {
+  if (rule[0] === 'inner' && pos + rule[1] === stateSize) {
+    return calculateInnerIndent(currentIndent, rule, indentInfo);
+  }
+
+  if (rule[0] === 'block' && pos === stateSize) {
+    return calculateBlockIndent(currentIndent, rule, indentInfo);
+  }
+
+  return currentIndent;
 };
 
 /** Returns the expected newline indent for the given position, in characters. */
-export function getIndent(document: EditableModel, offset: number, config?: any): number {
-  if (!config) {
-    config = {
-      'cljfmt-options': {
-        indents: indentRules,
-      },
-    };
+export function getIndent(
+  document: EditableModel,
+  offset: number,
+  config: FormatterConfig = {
+    'cljfmt-options': {
+      indents: indentRules,
+    },
   }
+): number {
   const state = collectIndents(document, offset, config);
-  // now find applicable indent rules
-  let indent = -1;
-  const thisBlock = state[state.length - 1];
   if (!state.length) {
     return 0;
   }
 
-  for (let pos = state.length - 1; pos >= 0; pos--) {
-    for (const rule of state[pos].rules) {
-      if (rule[0] == 'inner') {
-        if (pos + rule[1] == state.length - 1) {
-          if (rule.length == 3) {
-            if (rule[2] > thisBlock.argPos) {
-              indent = thisBlock.startIndent + 1;
-            }
-          } else {
-            indent = thisBlock.startIndent + 1;
-          }
-        }
-      } else if (rule[0] == 'block' && pos == state.length - 1) {
-        if (thisBlock.exprsOnLine <= rule[1]) {
-          if (thisBlock.argPos >= rule[1]) {
-            indent = thisBlock.startIndent + 1;
-          }
-        } else {
-          indent = thisBlock.firstItemIdent;
-        }
-      }
-    }
+  // now find applicable indent rules
+  let indent = -1;
+  const stateSize = state.length - 1;
+  const thisBlock = state.at(-1);
+  for (let pos = stateSize; pos >= 0; pos--) {
+    indent = state[pos].rules.reduce(
+      (currentIndent, rule) => calculateIndent(currentIndent, rule, thisBlock, stateSize, pos),
+      indent
+    );
   }
 
   if (indent == -1) {
-    // no indentation styles applied, so use default style.
-    if (thisBlock.exprsOnLine > 0) {
-      indent = thisBlock.firstItemIdent;
-    } else {
-      indent = thisBlock.startIndent;
-    }
+    return calculateDefaultIndent(thisBlock);
   }
+
   return indent;
 }

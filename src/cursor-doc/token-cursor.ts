@@ -1,4 +1,4 @@
-import { LineInputModel } from './model';
+import { getFirstEol, LineInputModel } from './model';
 import { Token, validPair } from './clojure-lexer';
 
 function tokenIsWhiteSpace(token: Token) {
@@ -765,17 +765,30 @@ export class LispTokenCursor extends TokenCursor {
     return [currentFormCursor.offsetStart, afterCurrentFormOffset];
   }
 
-  rangeForDefun(offset: number, commentCreatesTopLevel = true): [number, number] {
-    const cursor = this.doc.getTokenCursor(offset);
-    let lastCandidateRange: [number, number] = cursor.rangeForCurrentForm(offset);
+  rangeForDefun(p: number, commentCreatesTopLevel = true): [number, number] {
+    const cursor = this.doc.getTokenCursor(p);
+    const getFunctionPositionText = (cursor: LispTokenCursor) => {
+      // NB: This is probably a general need, so might with ino the token cursor.
+      //     However, it seems more semantically close to cursor.getFunctionName()
+      //     than it is so I hesitate to place it there. This is the only current
+      //     consumer of this version of the semantics anyway.
+      const functionCursor = cursor.clone();
+      functionCursor.backwardList();
+      functionCursor.forwardWhitespace();
+      return functionCursor.getToken().raw;
+    };
+    let lastCandidateRange: [number, number] = cursor.rangeForCurrentForm(p);
     while (cursor.forwardList() && cursor.upList()) {
       const commentCursor = cursor.clone();
       commentCursor.backwardDownList();
-      if (
-        !commentCreatesTopLevel ||
-        commentCursor.getToken().raw !== ')' ||
-        commentCursor.getFunctionName() !== 'comment'
-      ) {
+      if (commentCreatesTopLevel && getFunctionPositionText(commentCursor) === 'comment') {
+        if (commentCursor.getToken().raw !== ')') {
+          commentCursor.upList();
+          return commentCursor.rangeForCurrentForm(commentCursor.offsetStart);
+        } else {
+          return lastCandidateRange;
+        }
+      } else {
         lastCandidateRange = cursor.rangeForCurrentForm(cursor.offsetStart);
       }
     }
@@ -784,6 +797,18 @@ export class LispTokenCursor extends TokenCursor {
 
   rangesForTopLevelForms(): [number, number][] {
     const cursor = new LispTokenCursor(this.doc, 0, 0);
+    const ranges: [number, number][] = [];
+    while (cursor.forwardSexp()) {
+      const end = cursor.offsetStart;
+      cursor.backwardSexp();
+      ranges.push([cursor.offsetStart, end]);
+      cursor.forwardSexp();
+    }
+    return ranges;
+  }
+
+  rangesForCommentForms(offset: number): [number, number][] {
+    const cursor = this.doc.getTokenCursor(offset);
     const ranges: [number, number][] = [];
     while (cursor.forwardSexp()) {
       const end = cursor.offsetStart;
@@ -873,6 +898,8 @@ export class LispTokenCursor extends TokenCursor {
   /**
    * Tries to move this cursor backwards to the open paren of the function, `level` functions up.
    * If there aren't that many functions behind the cursor, the cursor is not moved at all.
+   * NB: The `levels` semantics is about nested functions. So it will find `|b` in `(a (b [c|]))`
+   *     if `levels` is 0.
    * @param levels how many functions up to go before placing the cursor at the start of it.
    * @returns `true` if the cursor was moved, otherwise `false`
    */
@@ -895,6 +922,7 @@ export class LispTokenCursor extends TokenCursor {
 
   /**
    * Get the name of the current function, optionally digging `levels` functions up.
+   * NB: See `backwardFunction()` for semantics of `levels`.
    * @param levels how many levels of functions to dig up.
    * @returns the function name, or undefined if there is no function there.
    */
@@ -925,13 +953,36 @@ export class LispTokenCursor extends TokenCursor {
     }
     return [undefined, undefined];
   }
+
+  /** Return true if cursor is at top level */
+  atTopLevel(commentCreatesTopLevel: boolean = false): boolean {
+    const tlCursor = this.clone();
+    if (tlCursor.forwardList() && tlCursor.upList()) {
+      if (commentCreatesTopLevel && this.getFunctionName() === 'comment') {
+        return true;
+      }
+      return false;
+    }
+    return true;
+  }
+
+  docIsBalanced(): boolean {
+    const cursor = this.clone();
+    cursor.set(new TokenCursor(this.doc, 0, 0));
+    while (cursor.forwardSexp(true, true, true)) {
+      // move forward until the cursor cannot move forward anymore
+    }
+    cursor.forwardWhitespace(true);
+    return cursor.atEnd();
+  }
 }
 
 /**
  * Creates a `LispTokenCursor` for walking and manipulating the string `s`.
  */
 export function createStringCursor(s: string): LispTokenCursor {
-  const model = new LineInputModel();
+  const eol = getFirstEol(s);
+  const model = new LineInputModel(eol ? eol.length : 1);
   model.insertString(0, s);
   return model.getTokenCursor(0);
 }

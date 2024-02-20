@@ -7,21 +7,30 @@ import * as clojureDocs from '../clojuredocs';
 import { getConfig } from '../config';
 import { evaluateSnippet } from '../custom-snippets';
 import * as getText from '../util/get-text';
+import * as lsp from '../lsp';
 import _ = require('lodash');
 
-export async function provideHover(document: vscode.TextDocument, position: vscode.Position) {
+export async function provideHover(
+  clientProvider: lsp.ClientProvider,
+  document: vscode.TextDocument,
+  position: vscode.Position
+) {
   if (util.getConnectedState()) {
     const text = util.getWordAtPosition(document, position);
-    const ns = namespace.getNamespace(document);
+    const [ns, _] = namespace.getNamespace(document, position);
     const client = replSession.getSession(util.getFileType(document));
-    if (client) {
+    if (client && client.supports('info')) {
       await namespace.createNamespaceFromDocumentIfNotExists(document);
       const res = await client.info(ns, text);
       const customREPLHoverSnippets = getConfig().customREPLHoverSnippets;
       const hovers: vscode.MarkdownString[] = [];
       if (!res.status.includes('error') && !res.status.includes('no-info')) {
         const docsMd = infoparser.getHover(res);
-        const clojureDocsMd = await clojureDocs.getExamplesHover(document, position);
+        const clojureDocsMd = await clojureDocs.getExamplesHover(
+          clientProvider,
+          document,
+          position
+        );
 
         hovers.push(docsMd);
 
@@ -33,6 +42,7 @@ export async function provideHover(document: vscode.TextDocument, position: vsco
 
       const context = {
         ns,
+        editorNs: ns,
         repl: document.languageId === 'clojure' ? replSession.getReplSessionTypeFromState() : 'clj',
         hoverText: text,
         hoverLine: position.line + 1,
@@ -42,14 +52,15 @@ export async function provideHover(document: vscode.TextDocument, position: vsco
         currentColumn: editor.selection.active.character,
         currentFilename: editor.document.fileName,
         selection: editor.document.getText(editor.selection),
-        ...getText.currentContext(editor.document, editor.selection.active),
-        ...getText.currentContext(document, position, 'hover'),
+        currentFileText: getText.currentFileText(editor.document),
+        ...getText.currentClojureContext(editor.document, editor.selection.active),
+        ...getText.currentClojureContext(document, position, 'hover'),
       };
 
       await Promise.all(
         customREPLHoverSnippets.map(async (snippet) => {
           try {
-            const text = await evaluateSnippet(snippet, context, {
+            const text = await evaluateSnippet(editor, snippet.snippet, context, {
               evaluationSendCodeToOutputWindow: false,
               showErrorMessage: false,
               showResult: false,
@@ -79,7 +90,9 @@ export async function provideHover(document: vscode.TextDocument, position: vsco
 }
 
 export default class HoverProvider implements vscode.HoverProvider {
+  constructor(private readonly clientProvider: lsp.ClientProvider) {}
+
   async provideHover(document, position, _) {
-    return provideHover(document, position);
+    return provideHover(this.clientProvider, document, position);
   }
 }

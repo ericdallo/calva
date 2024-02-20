@@ -7,6 +7,9 @@ description: Prettiness is on by default and all your evaluation results will ge
 
 In Calva, pretty printing is a mode. Prettiness is on by default and all your evaluation results will get that treatment.
 
+!!! Note "You can also pretty print code on demand"
+    There is a command **Replace Current Form (or Selection) with Pretty Printed Form**. See [Clojure Formmatting](formatting.md#3-replace-current-form-or-selection-with-pretty-printed-form) for more on this.
+
 ## Toggle it
 
 There is a `pprint` indicator to the right in the status bar which shows the status of the mode. Click the indicator to toggle prettification on and off. There is also a **Calva: Toggle Pretty Printing for All Evaluations** command.
@@ -69,6 +72,6 @@ The current options are limited, because our time developing Calva is limited. B
 
 #### pprint is not working
 
-If pprint is not working, try a different pprint engine or use Calva's jack-in to make sure the necessary dependencies are loaded in your REPL. If you are starting your REPL without jack-in and want to continue doing so, you can use the command `Copy Jack-in Command to Clipboard` then paste the command somewhere to see what dependencies it injects. You can then add these dependencies to your REPL in whatever way suits your needs.
+If pprint is not working, try a different pprint engine or use Calva's jack-in to make sure the necessary dependencies are loaded in your REPL. If you are starting your REPL without jack-in and want to continue doing so, you can use the command `Copy Jack-in Command Line to Clipboard` then paste the command somewhere to see what dependencies it injects. You can then add these dependencies to your REPL in whatever way suits your needs.
 
 Enjoy Prettiful Printing! ❤️

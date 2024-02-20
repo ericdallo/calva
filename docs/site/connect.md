@@ -7,13 +7,15 @@ search:
 
 # Connect Calva to Your Project
 
-The recommended way is to:
+When connected to your project's REPL Calva lets you evaluate code, supporting Interactive Programming. The REPL connection is also used to provide IDE functionality through the dynamic knowledge about the project that the REPL enables. The REPL communication depends on that your project has an [nREPL](https://github.com/nrepl/nrepl) server running, and that the [cider-nrepl](https://github.com/clojure-emacs/cider-nrepl) middleware is enabled.
+
+For the easiest way to provide your project with these dependencies, the recommended way to connect is to use the so called **Jack-in** command.
 
 ## Jack-in: Let Calva Start the REPL For You
 
 This way Calva can make sure it is started with the dependencies needed for a working Clojure and/or ClojureScript session. This is often referred to as **Jack in** (because that is what it is called in CIDER).
 
-Jack-in supports both CLJ and for CLJS, and has built-in configurations for **Leiningen**, **deps.edn**, and **shadow-cljs** projects, as well as for the CLJS repl types: **Figwheel Main**, **lein-figwheel** (legacy Figwheel), **shadow-cljs**, and ClojureScript built-ins for both browser and node.js. Using jack-in provides your development environment with all the dependencies you need for Calva to work.
+Jack-in supports both CLJ and for CLJS, and has built-in configurations for **Leiningen**, **deps.edn**, **shadow-cljs**, **Gradle** projects, as well as for the CLJS repl types: **Figwheel Main**, **lein-figwheel** (legacy Figwheel), **shadow-cljs**, and ClojureScript built-ins for both browser and node.js. Using jack-in provides your development environment with all the dependencies you need for Calva to work.
 
 It works like so:
 
@@ -24,7 +26,7 @@ It works like so:
 See also: [Workspace Layouts](workspace-layouts.md)
 
 !!! Note "About project roots"
-    You must have a project file, such as `project.clj` for Leiningen, or `deps.edn` for deps.edn, or `shadow-cljs.edn` for shadow-cljs, in the directory opened in VS Code in order for jack-in to work. If, after adding the project file, you experience an error during jack-in that says something could not be located, make sure you have the correct dependencies in your project file. For example, when using the **Figwheel Main** project type, you should have `com.bhauman/figwheel-main` in your project dependencies.
+    You must have a project file, such as `project.clj` for Leiningen, or `deps.edn` for deps.edn, or `shadow-cljs.edn` for shadow-cljs, or `settings.gradle`/`settings.gradle.kts` for Gradle in the directory opened in VS Code in order for jack-in to work. If, after adding the project file, you experience an error during jack-in that says something could not be located, make sure you have the correct dependencies in your project file. For example, when using the **Figwheel Main** project type, you should have `com.bhauman/figwheel-main` in your project dependencies.
 
     See also below, regarding [multiple projects in a workspace](#monorepos-multiple-clojure-projects-in-one-workspace)
 
@@ -38,17 +40,7 @@ There are ways to tell Calva the answers to these prompts beforehand, so that Ja
 
 ### Customizing Jack-in
 
-The main mechanism for customizing your Jack-in, including automating menu selections, and custom CLJS REPL types is [Custom Connect Sequences](connect-sequences.md).
-
-There are also these settings:
-
-* `calva.jackInEnv`: An object with environment variables that will be added to the environment of the Jack-in process.
-* `calva.myCljAliases`: An array of `deps.edn` aliases not found in the project file. Use this to tell Calva Jack-in to launch your REPL using your user defined aliases.
-* `calva.myLeinProfiles`: An array of Leiningen profiles not found in `project.clj`. Use this to tell Calva Jack-in to launch your REPL using your user defined profiles.
-* `calva.openBrowserWhenFigwheelStarted`: _For Legacy Figwheel only._ A boolean controlling if Calva should automatically launch your ClojureScript app, once it is compiled by Figwheel. Defaults to `true`.
-
-!!! Note
-    When processing the `calva.jackInEnv` setting you can refer to existing ENV variables with `${env:VARIABLE}`.
+The main mechanism for customizing your Jack-in, including automating menu selections, and custom CLJS REPL types is [Custom Connect Sequences](connect-sequences.md). See also [Customizing Jack-in and Connect](customizing-jack-in-and-connect.md)
 
 ## Connecting Without Jack-in
 
@@ -60,8 +52,22 @@ Even better: Copying that command line gives you the command to start the REPL w
 
 All this said, I still recommend you challenge the conclusion that you can't use Jack-in.
 
-!!! Note
-    There is a Calva command for copying the Jack-in command line to the clipboard.
+!!! Note "Copy the Jack-in command line"
+    There is a Calva command for copying the Jack-in command line to the clipboard. It will copy the command line including commands to change to the current REPL project root, avoiding hard-to-detect errors when starting the REPL in the wrong directory.
+
+!!! Note "The Generic Project Type"
+    A reason to use the connect to a running REPL way, can be that Calva does not have a built in [connect sequence/project type](connect-sequences.md) for the particular REPL you want to connect to. Maybe it is something like [Lingy](https://github.com/ingydotnet/lingy) which doesn't yet have a built in Calva connect sequence. As long as there is an nREPL server to connect to, you can Connect with Calva, using the **Generic** connect sequence/project type. (You can also create a [connect sequence with a custom command line](connect-sequences.md#custom-command-line), and use Jack-in anyway.)
+
+
+See also [Customizing Jack-in and Connect](customizing-jack-in-and-connect.md)
+
+### Starting the REPL from application code?
+
+If your project is setup so that the REPL server is started by the application code, you will need to get the cider-nrepl middleware in place. See the cider-nrepl docs about [embedding nREPL in your application](https://docs.cider.mx/cider-nrepl/usage.html#via-embedding-nrepl-in-your-application).
+
+## Auto-select Project Type and Project Root
+
+You can make both Jack-in and Connect stop prompting you for project type and project root path in projects where you always want to use the same. See [Connect Sequences](connect-sequences.md).
 
 ## Monorepos / multiple Clojure projects in one workspace
 
@@ -69,14 +75,19 @@ If the workspace is a monorepo, Polylith repo or just a repository with more tha
 
 ![The project roots menu](images/calva-monorepo-project-roots-menu.png)
 
-When searching for project roots in your workspace, Calva will glob for all files matching `project.clj`, `deps.edn`, or `shadow-cljs.edn`. This is done using VS Code's workspace search engine, and is very efficient. However, in a large monorepo, it is still a substantial task. In order to not waste resources Calva will exclude any directories in the setting `calva.projectRootsSearchExclude`. 
+## shadow-cljs
 
-![calva.projectRootsSearchExclude setting](images/calva-project-roots-search-exclude.png)
-
-!!! Note "Exclude entry globs"
-    Each entry is a partial *glob* and will be part of a resulting *glob* of the form `**/{glob1,glob2,...,globN}`. This means that all directories in the workspace matching an entry will be excluded, regardless of where in the workspace they reside.
+Please see the [shadow-cljs](shadow-cljs.md) page.
 
 ## Troubleshooting
+
+### Jack-in and `:main-opts`
+
+When Calva starts the project REPL and connects to it (a.k.a. Jack-in), this is done by starting an nREPL server. For deps.edn projects this by default means that Calva will add `-m ...` with options that starts the server.
+
+_However_: If you choose an alias at Jack-in that specifies `:main-opts`, it will make the Clojure CLI to add main opts and Calva will then not override these by adding `-m ...` to the command line. This means that an alias that specify `:main-opts` must result in an nREPL server being started, or else Calva won't have a server to connect to. Calva won't further analyze this, but will just warn you at Jack-in.
+
+If you don't know if an alias starts an nREPL server or not, by all means, try it, if you have reasons for using that alias. You will notice if Jack-in works or not. If it doesn't work, you will need to run without that alias, or fix what happens when that alias is used so that an nREPL server is started. See https://nrepl.org/nrepl/usage/server.html about ways to do this.
 
 ### Command Not Found Errors When Jacking In
 

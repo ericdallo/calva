@@ -3,16 +3,22 @@ import * as path from 'path';
 import * as utilities from '../utilities';
 import * as _ from 'lodash';
 import * as state from '../state';
-import status from '../status';
 import * as connector from '../connector';
 import { nClient } from '../connector';
 import statusbar from '../statusbar';
-import { askForConnectSequence, ReplConnectSequence, CljsTypes } from './connectSequence';
+import {
+  askForConnectSequence,
+  ReplConnectSequence,
+  CljsTypes,
+  getConnectSequences,
+} from './connectSequence';
 import * as projectTypes from './project-types';
 import * as outputWindow from '../results-output/results-doc';
 import { JackInTerminal, JackInTerminalOptions, createCommandLine } from './jack-in-terminal';
 import * as liveShareSupport from '../live-share';
 import { getConfig } from '../config';
+import * as joyride from '../joyride';
+import { ConnectType } from './connect-types';
 
 let jackInPTY: JackInTerminal = undefined;
 let jackInTerminal: vscode.Terminal = undefined;
@@ -53,19 +59,21 @@ function executeJackInTask(
 
   // in case we have a running task present try to end it.
   calvaJackout();
-  status.updateNeedReplUi(true);
   if (jackInTerminal !== undefined) {
     jackInTerminal.dispose();
     jackInTerminal = undefined;
   }
 
   try {
-    jackInPTY = new JackInTerminal(
+    const pty = new JackInTerminal(
       terminalOptions,
       (_p, hostname: string, port: string) => {
+        jackInPTY = pty;
         utilities.setLaunchingState(null);
         void connector.connect(connectSequence, true, hostname, port).then(() => {
-          outputWindow.append('; Jack-in done.');
+          utilities.setJackedInState(true);
+          statusbar.update();
+          outputWindow.appendLine('; Jack-in done.');
           outputWindow.appendPrompt();
           if (cb) {
             cb();
@@ -73,9 +81,9 @@ function executeJackInTask(
         });
       },
       (errorMessage) => {
-        outputWindow.append('; Error in Jack-in: unable to read port file');
-        outputWindow.append(`; ${errorMessage}`);
-        outputWindow.append(
+        outputWindow.appendLine('; Error in Jack-in: unable to read port file');
+        outputWindow.appendLine(`; ${errorMessage}`);
+        outputWindow.appendLine(
           '; You may have chosen the wrong jack-in configuration for your project.'
         );
         void vscode.window.showErrorMessage(
@@ -86,12 +94,12 @@ function executeJackInTask(
     );
     jackInTerminal = (<any>vscode.window).createTerminal({
       name: `Calva Jack-in: ${connectSequence.name}`,
-      pty: jackInPTY,
+      pty: pty,
     });
     if (getConfig().autoOpenJackInTerminal) {
       jackInTerminal.show();
     }
-    jackInPTY.onDidClose((e) => {
+    pty.onDidClose((e) => {
       calvaJackout();
     });
   } catch (exception) {
@@ -100,7 +108,7 @@ function executeJackInTask(
 }
 
 export function calvaJackout() {
-  if (jackInPTY != undefined) {
+  if (jackInPTY !== undefined) {
     if (projectTypes.isWin) {
       // this is a hack under Windows to terminate the
       // repl process from the repl client because the
@@ -123,6 +131,7 @@ export function calvaJackout() {
     jackInPTY.killProcess();
     jackInPTY = undefined;
     utilities.setLaunchingState(null);
+    utilities.setJackedInState(false);
     statusbar.update();
   }
 
@@ -131,26 +140,48 @@ export function calvaJackout() {
 
 export async function copyJackInCommandToClipboard(): Promise<void> {
   try {
-    await state.initProjectDir();
+    await state.initProjectDir(ConnectType.JackIn, undefined);
   } catch (e) {
     console.error('An error occurred while initializing project directory.', e);
     return;
   }
+
   let projectConnectSequence: ReplConnectSequence;
   try {
-    projectConnectSequence = await getProjectConnectSequence();
+    projectConnectSequence = await getProjectConnectSequence(false);
   } catch (e) {
     return;
   }
   if (projectConnectSequence) {
-    const { executable, args } = await getJackInTerminalOptions(projectConnectSequence);
-    if (executable && args) {
-      void vscode.env.clipboard.writeText(createCommandLine(executable, args));
-      void vscode.window.showInformationMessage('Jack-in command copied to the clipboard.');
+    try {
+      const options = await getJackInTerminalOptions(projectConnectSequence);
+      if (options) {
+        void vscode.env.clipboard.writeText(createCommandLine(options));
+        void vscode.window.showInformationMessage('Jack-in command line copied to the clipboard.');
+      }
+    } catch (e) {
+      void vscode.window.showErrorMessage(`Error creating Jack-in command line: ${e}`, 'OK');
     }
   } else {
     void vscode.window.showInformationMessage('No supported project types detected.');
   }
+}
+
+type Substitutions = {
+  [key: string]: string | string[];
+};
+
+function substituteCustomCommandLinePlaceholders(
+  commandLineTemplate: string,
+  substitutions: Substitutions
+) {
+  return Object.keys(substitutions).reduce((acc: string, k: string) => {
+    const placeholder = `JACK-IN-${k}`;
+    const value: string = Array.isArray(substitutions[k])
+      ? (substitutions[k] as string[]).join(',')
+      : (substitutions[k] as string);
+    return acc.replace(new RegExp(placeholder, 'g'), value);
+  }, commandLineTemplate);
 }
 
 async function getJackInTerminalOptions(
@@ -173,7 +204,13 @@ async function getJackInTerminalOptions(
 
   const projectType = projectTypes.getProjectTypeForName(projectTypeName);
 
-  let args: string[] = await projectType.commandLine(projectConnectSequence, selectedCljsType);
+  if (!projectType?.commandLine) {
+    throw new Error(`Project type ${projectTypeName} does not support Jack-in.`);
+  }
+
+  const commandLineInfo = await projectType.commandLine(projectConnectSequence, selectedCljsType);
+
+  let args: string[] = commandLineInfo.args;
   let cmd: string[];
   if (projectTypes.isWin) {
     cmd = projectType.winCmd;
@@ -194,13 +231,26 @@ async function getJackInTerminalOptions(
       cmd = [...cmd, projectType.resolveBundledPathWin()];
     }
   } else {
-    cmd = projectType.cmd;
+    cmd = typeof projectType.cmd === 'function' ? projectType.cmd() : projectType.cmd;
     if (projectType.resolveBundledPathUnix) {
       cmd = [...cmd, projectType.resolveBundledPathUnix()];
     }
   }
-  const executable: string = cmd[0];
-  args = [...cmd.slice(1), ...args];
+  const nReplPortFile = projectConnectSequence.nReplPortFile ?? projectType.nReplPortFile;
+  const substitutions = {
+    'PROJECT-ROOT-PATH': state.getProjectRootLocal(),
+    ...(nReplPortFile
+      ? { 'NREPL-PORT-FILE': nReplPortFile.join(projectTypes.isWin ? '\\' : '/') }
+      : {}),
+    ...commandLineInfo.substitutions,
+  };
+  const executable: string = projectConnectSequence.customJackInCommandLine
+    ? substituteCustomCommandLinePlaceholders(
+        projectConnectSequence.customJackInCommandLine,
+        substitutions
+      )
+    : cmd[0];
+  args = projectConnectSequence.customJackInCommandLine ? [] : [...cmd.slice(1), ...args];
 
   const terminalOptions: JackInTerminalOptions = {
     name: `Calva Jack-in: ${projectConnectSequence.name}`,
@@ -209,6 +259,9 @@ async function getJackInTerminalOptions(
     env: {
       ...getGlobalJackInEnv(),
       ...processEnvObject(projectConnectSequence.jackInEnv),
+      ...Object.entries(substitutions).reduce((acc, [key, value]) => {
+        return { ...acc, [`JACK_IN_${key.replace(/-/g, '_')}`]: value };
+      }, {}),
     },
     isWin: projectTypes.isWin,
     cwd: state.getProjectRootLocal(),
@@ -217,53 +270,74 @@ async function getJackInTerminalOptions(
   return terminalOptions;
 }
 
-async function getProjectConnectSequence(): Promise<ReplConnectSequence> {
+async function getProjectConnectSequence(disableAutoSelect: boolean): Promise<ReplConnectSequence> {
   const cljTypes: string[] = await projectTypes.detectProjectTypes();
+  const excludes = ['generic', 'cljs-only'];
+  if (joyride.isJoyrideExtensionActive() && joyride.isJoyrideNReplServerRunning()) {
+    excludes.push('joyride');
+  }
   if (cljTypes.length > 1) {
-    const connectSequence = await askForConnectSequence(
-      cljTypes.filter((t) => !['generic', 'cljs-only'].includes(t)),
-      'jack-in-type',
-      'JackInInterrupted'
+    return askForConnectSequence(
+      cljTypes.filter((t) => !excludes.includes(t)),
+      ConnectType.JackIn,
+      disableAutoSelect
     );
-    if (connectSequence) {
-      return connectSequence;
-    } else {
-      return Promise.reject();
-    }
   }
 }
 
-export async function jackIn(connectSequence: ReplConnectSequence, cb?: () => unknown) {
+export async function jackIn(
+  connectSequence: ReplConnectSequence,
+  disableAutoSelect: boolean,
+  cb?: () => unknown
+) {
+  void state.analytics().logGA4Pageview('/connect-initiated');
+  void state.analytics().logGA4Pageview('/connect-initiated/jack-in');
+
   try {
     await liveShareSupport.setupLiveShareListener();
   } catch (e) {
     console.error('An error occurred while setting up Live Share listener.', e);
   }
   if (state.getProjectRootUri().scheme === 'vsls') {
-    outputWindow.append("; Aborting Jack-in, since you're the guest of a live share session.");
-    outputWindow.append(
+    outputWindow.appendLine("; Aborting Jack-in, since you're the guest of a live share session.");
+    outputWindow.appendLine(
       '; Please use this command instead: Connect to a running REPL server in the project.'
     );
     return;
   }
   state.analytics().logEvent('REPL', 'JackInInitiated').send();
   await outputWindow.initResultsDoc();
-  outputWindow.append('; Jacking in...');
+  outputWindow.appendLine('; Jacking in...');
   await outputWindow.openResultsDoc();
 
   let projectConnectSequence: ReplConnectSequence = connectSequence;
   if (!projectConnectSequence) {
     try {
-      projectConnectSequence = await getProjectConnectSequence();
+      projectConnectSequence = await getProjectConnectSequence(disableAutoSelect);
     } catch (e) {
-      outputWindow.append('; Aborting jack-in. No project type selected.');
+      outputWindow.appendLine(`; ${e}\n; Aborting jack-in.`);
+      // TODO: Figure out why this is not shown to the user.
+      void vscode.window.showErrorMessage(e, 'OK');
+      return;
+    }
+    if (!projectConnectSequence) {
+      outputWindow.appendLine('; Aborting jack-in. No project type selected.');
       return;
     }
   }
   if (projectConnectSequence) {
-    const terminalJackInOptions = await getJackInTerminalOptions(projectConnectSequence);
-    if (terminalJackInOptions) {
-      executeJackInTask(terminalJackInOptions, projectConnectSequence, cb);
+    const projectType = projectTypes.getProjectTypeForName(projectConnectSequence.projectType);
+    if (projectType.startFunction) {
+      void projectType.startFunction();
+    } else {
+      try {
+        const terminalJackInOptions = await getJackInTerminalOptions(projectConnectSequence);
+        if (terminalJackInOptions) {
+          executeJackInTask(terminalJackInOptions, projectConnectSequence, cb);
+        }
+      } catch (e) {
+        void vscode.window.showErrorMessage(`Error creating jack-in command line: ${e}`, 'OK');
+      }
     }
   } else {
     void vscode.window.showInformationMessage(
@@ -275,15 +349,29 @@ export async function jackIn(connectSequence: ReplConnectSequence, cb?: () => un
   void liveShareSupport.didJackIn();
 }
 
-export async function jackInCommand(connectSequence?: ReplConnectSequence) {
-  status.updateNeedReplUi(true);
+export function jackOutCommand() {
+  calvaJackout();
+}
+
+export async function jackInCommand(options: {
+  connectSequence?: ReplConnectSequence | string;
+  disableAutoSelect?: boolean;
+}) {
+  let connectSequence: ReplConnectSequence;
+  if (options && typeof options.connectSequence === 'string') {
+    connectSequence = getConnectSequences(projectTypes.getAllProjectTypes()).find(
+      (s) => s.name === options.connectSequence
+    );
+  } else if (options && options.connectSequence) {
+    connectSequence = options.connectSequence as ReplConnectSequence;
+  }
   try {
-    await state.initProjectDir();
+    await state.initProjectDir(ConnectType.JackIn, connectSequence, options?.disableAutoSelect);
   } catch (e) {
     console.error('An error occurred while initializing project directory.', e);
     return;
   }
-  await jackIn(connectSequence);
+  await jackIn(connectSequence, options?.disableAutoSelect);
 }
 
 export function calvaDisconnect() {
@@ -304,7 +392,7 @@ export function calvaDisconnect() {
           utilities.setLaunchingState(null);
           utilities.setConnectingState(false);
           statusbar.update();
-          outputWindow.append('; Interrupting Jack-in process.');
+          outputWindow.appendLine('; Interrupting Jack-in process.');
         }
       });
     return;

@@ -10,10 +10,14 @@ import * as outputWindow from './results-output/results-doc';
 import * as cljsLib from '../out/cljs-lib/cljs-lib';
 import * as url from 'url';
 import { isUndefined } from 'lodash';
-import { isNullOrUndefined } from 'util';
+import * as fiddleFiles from './fiddle-files';
 
 const specialWords = ['-', '+', '/', '*']; //TODO: Add more here
 const syntaxQuoteSymbol = '`';
+
+export function capitalize(str: string) {
+  return str.length === 0 ? str : str[0].toUpperCase() + str.substring(1);
+}
 
 export function stripAnsi(str: string) {
   return str.replace(
@@ -24,7 +28,7 @@ export function stripAnsi(str: string) {
 }
 
 export const isDefined = <T>(value: T | undefined | null): value is T => {
-  return !isNullOrUndefined(value);
+  return !(value === undefined || value === null);
 };
 
 // This needs to be a function and not an arrow function
@@ -33,48 +37,44 @@ export function assertIsDefined<T>(
   value: T | undefined | null,
   message: string | (() => string)
 ): asserts value is T {
-  if (isNullOrUndefined(value)) {
+  if (!isDefined(value)) {
     throw new Error(typeof message === 'string' ? message : message());
   }
 }
 
-export function escapeStringRegexp(s: string): string {
-  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-}
-
-export function isNonEmptyString(value: any): boolean {
-  return typeof value == 'string' && value.length > 0;
-}
-
 async function quickPickSingle(opts: {
   title?: string;
-  values: string[];
+  values: vscode.QuickPickItem[];
   saveAs: string;
   default?: string;
   placeHolder: string;
   autoSelect?: boolean;
-}) {
+}): Promise<string | undefined> {
   if (opts.values.length == 0) {
     return;
   }
   const saveAs = `qps-${opts.saveAs}`;
   const selected = opts.default ?? state.extensionContext.workspaceState.get<string>(saveAs);
 
-  let result;
-  if (opts.autoSelect && opts.values.length == 1) {
-    result = opts.values[0];
-  } else {
-    result = await quickPick(opts.values, selected ? [selected] : [], [], {
-      title: opts.title,
-      placeHolder: opts.placeHolder,
-      ignoreFocusOut: true,
-    });
-  }
+  const hasOnlyOneOption = opts.autoSelect && opts.values.length == 1;
+
+  const result = hasOnlyOneOption
+    ? opts.values[0]?.label
+    : await quickPick(opts.values, selected ? [selected] : [], [], {
+        title: opts.title,
+        placeHolder: opts.placeHolder,
+        ignoreFocusOut: true,
+      });
+
   void state.extensionContext.workspaceState.update(saveAs, result);
   return result;
 }
 
-async function quickPickMulti(opts: { values: string[]; saveAs: string; placeHolder: string }) {
+async function quickPickMulti(opts: {
+  values: vscode.QuickPickItem[];
+  saveAs: string;
+  placeHolder: string;
+}) {
   const saveAs = `qps-${opts.saveAs}`;
   const selected = state.extensionContext.workspaceState.get<string[]>(saveAs) || [];
   const result = await quickPick(opts.values, [], selected, {
@@ -91,34 +91,34 @@ async function quickPickMulti(opts: { values: string[]; saveAs: string; placeHol
 let quickPickActive: Promise<void>;
 
 function quickPick(
-  itemsToPick: string[],
+  itemsToPick: vscode.QuickPickItem[],
   active: string[],
   selected: string[],
-  options: vscode.QuickPickOptions & { canPickMany: true }
+  quickPickOptions: vscode.QuickPickOptions & { canPickMany: true }
 ): Promise<string[]>;
 function quickPick(
-  itemsToPick: string[],
+  itemsToPick: vscode.QuickPickItem[],
   active: string[],
   selected: string[],
-  options: vscode.QuickPickOptions
+  quickPickOptions: vscode.QuickPickOptions
 ): Promise<string>;
 
 async function quickPick(
-  itemsToPick: string[],
+  itemsToPick: vscode.QuickPickItem[],
   active: string[],
   selected: string[],
-  options: vscode.QuickPickOptions
+  quickPickOptions: vscode.QuickPickOptions
 ): Promise<string[] | string | undefined> {
-  const items = itemsToPick.map((x) => ({ label: x }));
+  const items = itemsToPick; //.map((x) => ({ label: x }));
 
   const qp = vscode.window.createQuickPick();
   quickPickActive = new Promise<void>((resolve) => qp.onDidChangeActive((e) => resolve()));
-  qp.canSelectMany = !!options.canPickMany;
-  qp.title = options.title;
-  qp.placeholder = options.placeHolder;
-  qp.ignoreFocusOut = !!options.ignoreFocusOut;
-  qp.matchOnDescription = !!options.matchOnDescription;
-  qp.matchOnDetail = !!options.matchOnDetail;
+  qp.canSelectMany = !!quickPickOptions.canPickMany;
+  qp.title = quickPickOptions.title;
+  qp.placeholder = quickPickOptions.placeHolder;
+  qp.ignoreFocusOut = !!quickPickOptions.ignoreFocusOut;
+  qp.matchOnDescription = !!quickPickOptions.matchOnDescription;
+  qp.matchOnDetail = !!quickPickOptions.matchOnDetail;
   qp.items = items;
   qp.activeItems = items.filter((x) => active.indexOf(x.label) != -1);
   qp.selectedItems = items.filter((x) => selected.indexOf(x.label) != -1);
@@ -126,9 +126,9 @@ async function quickPick(
     qp.show();
     qp.onDidAccept(() => {
       if (qp.canSelectMany) {
-        resolve(qp.selectedItems.map((x) => x.label));
+        resolve(qp.selectedItems.map((x) => x?.label));
       } else if (qp.selectedItems.length) {
-        resolve(qp.selectedItems[0].label);
+        resolve(qp.selectedItems[0]?.label);
       } else {
         resolve(undefined);
       }
@@ -136,7 +136,7 @@ async function quickPick(
       quickPickActive = undefined;
     });
     qp.onDidHide(() => {
-      resolve([]);
+      resolve(qp.canSelectMany ? [] : undefined);
       qp.hide();
       quickPickActive = undefined;
     });
@@ -231,6 +231,18 @@ function getConnectedState() {
 function setConnectedState(value: boolean) {
   void vscode.commands.executeCommand('setContext', 'calva:connected', value);
   cljsLib.setStateValue('connected', value);
+  if (value) {
+    fiddleFiles.updateFiddleFileOpenedContext(vscode.window.activeTextEditor);
+  }
+}
+
+function getJackedInState() {
+  return cljsLib.getStateValue('jackedIn');
+}
+
+function setJackedInState(value: boolean) {
+  void vscode.commands.executeCommand('setContext', 'calva:jackedIn', value);
+  cljsLib.setStateValue('jackedIn', value);
 }
 
 function getConnectingState() {
@@ -269,14 +281,14 @@ function logSuccess(results) {
 }
 
 function logError(error) {
-  outputWindow.append('; ' + error.reason);
+  outputWindow.appendLine('; ' + error.reason);
   if (
     error.line !== undefined &&
     error.line !== null &&
     error.column !== undefined &&
     error.column !== null
   ) {
-    outputWindow.append(';   at line: ' + error.line + ' and column: ' + error.column);
+    outputWindow.appendLine(';   at line: ' + error.line + ' and column: ' + error.column);
   }
 }
 
@@ -309,12 +321,12 @@ function markError(error) {
 }
 
 function logWarning(warning) {
-  outputWindow.append('; ' + warning.reason);
+  outputWindow.appendLine('; ' + warning.reason);
   if (warning.line !== null) {
     if (warning.column !== null) {
-      outputWindow.append(';   at line: ' + warning.line + ' and column: ' + warning.column);
+      outputWindow.appendLine(';   at line: ' + warning.line + ' and column: ' + warning.column);
     } else {
-      outputWindow.append(';   at line: ' + warning.line);
+      outputWindow.appendLine(';   at line: ' + warning.line);
     }
   }
 }
@@ -378,7 +390,9 @@ function scrollToBottom(editor: vscode.TextEditor) {
 }
 
 async function getFileContents(path: string) {
-  const doc = vscode.workspace.textDocuments.find((document) => document.uri.path === path);
+  const doc = vscode.workspace.textDocuments.find(
+    (d) => d.uri.path === path && d.uri.scheme === 'file'
+  );
   if (doc) {
     return doc.getText();
   }
@@ -537,8 +551,35 @@ function getActiveTextEditor(): vscode.TextEditor {
   return editor;
 }
 
+async function showBooleanInformationMessage(
+  title: string,
+  doNotShowKey?: string
+): Promise<boolean> {
+  if (state.extensionContext.workspaceState.get<boolean>(doNotShowKey)) {
+    return;
+  }
+  const answer = await vscode.window.showInformationMessage(
+    title,
+    'Yes',
+    'No',
+    'Do not show again'
+  );
+  if (doNotShowKey && answer === 'Do not show again') {
+    void state.extensionContext.workspaceState.update(doNotShowKey, true);
+  }
+  return answer === 'Yes';
+}
+
 function pathExists(path: string): boolean {
   return fs.existsSync(path);
+}
+
+export function lastLineIsEmpty(
+  doc: vscode.TextDocument = vscode.window.activeTextEditor.document
+): boolean {
+  const { lineCount } = doc;
+  const lastLine = doc.getText(new vscode.Range(lineCount - 1, 0, lineCount - 1, Infinity));
+  return lastLine === '';
 }
 
 export {
@@ -551,6 +592,8 @@ export {
   setLaunchingState,
   getConnectedState,
   setConnectedState,
+  getJackedInState,
+  setJackedInState,
   getConnectingState,
   setConnectingState,
   specialWords,
@@ -583,4 +626,5 @@ export {
   getActiveTextEditor,
   pathExists,
   calvaTmpDir,
+  showBooleanInformationMessage,
 };

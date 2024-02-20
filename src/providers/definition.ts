@@ -5,62 +5,90 @@ import annotations from './annotations';
 import * as namespace from '../namespace';
 import * as outputWindow from '../results-output/results-doc';
 import * as replSession from '../nrepl/repl-session';
+import * as config from '../config';
 import { createConverter } from 'vscode-languageclient/lib/common/protocolConverter';
-import { getClient } from '../lsp/main';
 import { DefinitionRequest } from 'vscode-languageclient';
+import * as lsp from '../lsp';
 
-const converter = createConverter(undefined, undefined);
-
-const definitionProviderOptions = { priority: ['lsp', 'repl'] };
+const converter = createConverter(undefined, undefined, true);
 
 const definitionFunctions = { lsp: lspDefinition, repl: provideClojureDefinition };
 
-async function provideClojureDefinition(document, position: vscode.Position, _token) {
+async function provideClojureDefinition(
+  clientProvider: lsp.ClientProvider,
+  document,
+  position: vscode.Position,
+  _token
+) {
   const evalPos = annotations.getEvaluationPosition(position);
   const posIsEvalPos = evalPos && position.isEqual(evalPos);
   if (util.getConnectedState() && !posIsEvalPos) {
-    const text = util.getWordAtPosition(document, position);
     const client = replSession.getSession(util.getFileType(document));
-    const info = await client.info(namespace.getNamespace(document), text);
-    if (info.file && info.file.length > 0) {
-      const pos = new vscode.Position(info.line - 1, info.column || 0);
-      try {
-        return new vscode.Location(vscode.Uri.parse(info.file, true), pos);
-      } catch (e) {
-        /* ignore */
+    if (client?.supports('info')) {
+      const text = util.getWordAtPosition(document, position);
+      const info = await client.info(namespace.getNamespace(document, position)[0], text);
+      if (info.file && info.file.length > 0) {
+        const pos = new vscode.Position(info.line - 1, info.column || 0);
+        try {
+          return new vscode.Location(vscode.Uri.parse(info.file, true), pos);
+        } catch (e) {
+          /* ignore */
+        }
       }
     }
   }
 }
 
-async function lspDefinition(document, position: vscode.Position, token) {
-  const lspClient = await getClient(20);
-  return lspClient.sendRequest(
+function lspDefinition(
+  clientProvider: lsp.ClientProvider,
+  document,
+  position: vscode.Position,
+  token
+) {
+  const client = clientProvider.getClientForDocumentUri(document.uri);
+  return client?.sendRequest(
     DefinitionRequest.type,
-    lspClient.code2ProtocolConverter.asTextDocumentPositionParams(document, position),
+    client?.code2ProtocolConverter.asTextDocumentPositionParams(document, position),
     token
   );
 }
 
 export class ClojureDefinitionProvider implements vscode.DefinitionProvider {
-  state: any;
-  constructor() {
-    this.state = state;
-  }
+  state = state;
+  constructor(private readonly clientProvider: lsp.ClientProvider) {}
 
   async provideDefinition(document, position: vscode.Position, token) {
-    for (const provider of definitionProviderOptions.priority) {
-      const definition = await definitionFunctions[provider](document, position, token);
-
-      if (definition) {
-        if (definition instanceof vscode.Location) {
-          return definition;
+    const providers = config.getConfig().definitionProviderPriority;
+    for (const provider of providers) {
+      const providerFunction = definitionFunctions[provider];
+      if (providerFunction) {
+        const definition = await providerFunction(
+          this.clientProvider,
+          document,
+          position,
+          token
+        )?.catch((e) => {
+          console.error(
+            `Definition lookup failed for provider '${provider}', ${
+              provider === 'lsp'
+                ? 'is clojure-lsp running and configured correctly?'
+                : 'do you have the cider-nrepl dependency loaded in your project? See https://calva.io/connect'
+            }`,
+            e
+          );
+        });
+        if (definition) {
+          if (definition instanceof vscode.Location) {
+            return definition;
+          }
+          return converter.asLocation(definition);
         }
-
-        return converter.asLocation(definition);
+      } else {
+        void vscode.window.showErrorMessage(
+          `Bad 'calva.definitionProviderPriority' setting, '${provider}' is not supported.`
+        );
       }
     }
-
     return null;
   }
 }

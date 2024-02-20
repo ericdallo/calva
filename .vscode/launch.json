@@ -5,6 +5,23 @@
   "version": "0.2.0",
   "configurations": [
     {
+      "name": "Launch w/ test folder",
+      "type": "extensionHost",
+      "request": "launch",
+      "runtimeExecutable": "${execPath}",
+      "args": ["--extensionDevelopmentPath=${workspaceRoot}", "${workspaceFolder}/test-data"],
+      "stopOnEntry": false,
+      "sourceMaps": true,
+      "env": {
+        "IS_DEBUG": "true",
+        "CALVA_DEV_GA": "FUBAR-69796730-4",
+        "CALVA_DEV_GA4_ID": "G-FTNZ1YC3ND",
+        "CALVA_DEV_GA4_TOKEN": "_es8QHFXQP2jf7FwUYa_cg",
+        "DEBUG": "no-debug-universal-analytics"
+      },
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
+    },
+    {
       "name": "Launch Extension",
       "type": "extensionHost",
       "request": "launch",
@@ -15,11 +32,12 @@
       "env": {
         "IS_DEBUG": "true",
         "CALVA_DEV_GA": "FUBAR-69796730-4",
+        "CALVA_DEV_GA4_ID": "G-FTNZ1YC3ND",
+        "CALVA_DEV_GA4_TOKEN": "_es8QHFXQP2jf7FwUYa_cg",
         "DEBUG": "no-debug-universal-analytics"
       },
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
     },
-
     {
       "name": "Launch Extension w/o extensions",
       "type": "extensionHost",
@@ -31,24 +49,28 @@
       "env": {
         "IS_DEBUG": "true",
         "CALVA_DEV_GA": "FUBAR-69796730-4",
+        "CALVA_DEV_GA4_ID": "G-FTNZ1YC3ND",
+        "CALVA_DEV_GA4_TOKEN": "_es8QHFXQP2jf7FwUYa_cg",
         "DEBUG": "no-debug-universal-analytics"
       },
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
     },
     {
-      "name": "Launch w/ test folder",
+      "name": "Launch Extension w/o extensions --throw-deprecation",
       "type": "extensionHost",
       "request": "launch",
       "runtimeExecutable": "${execPath}",
-      "args": ["--extensionDevelopmentPath=${workspaceRoot}", "${workspaceFolder}/test-data"],
-      "stopOnEntry": false,
+      "args": ["--extensionDevelopmentPath=${workspaceRoot}", "--disable-extensions"],
       "sourceMaps": true,
       "env": {
+        "NODE_OPTIONS": "--throw-deprecation",
         "IS_DEBUG": "true",
         "CALVA_DEV_GA": "FUBAR-69796730-4",
+        "CALVA_DEV_GA4_ID": "G-FTNZ1YC3ND",
+        "CALVA_DEV_GA4_TOKEN": "_es8QHFXQP2jf7FwUYa_cg",
         "DEBUG": "no-debug-universal-analytics"
       },
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
     },
     {
       "name": "Launch w/ /tmp/foo.clj",
@@ -61,9 +83,11 @@
       "env": {
         "IS_DEBUG": "true",
         "CALVA_DEV_GA": "FUBAR-69796730-4",
+        "CALVA_DEV_GA4_ID": "G-FTNZ1YC3ND",
+        "CALVA_DEV_GA4_TOKEN": "_es8QHFXQP2jf7FwUYa_cg",
         "DEBUG": "no-debug-universal-analytics"
       },
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
     },
     {
       "name": "Launch w/ welcome-to-calva.md",
@@ -80,9 +104,11 @@
         "IS_DEBUG": "true",
         "NEW_DRAMS": "true",
         "CALVA_DEV_GA": "FUBAR-69796730-4",
+        "CALVA_DEV_GA4_ID": "G-FTNZ1YC3ND",
+        "CALVA_DEV_GA4_TOKEN": "_es8QHFXQP2jf7FwUYa_cg",
         "DEBUG": "no-debug-universal-analytics"
       },
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
     },
     {
       "name": "Launch w/ no folder",
@@ -95,9 +121,11 @@
       "env": {
         "IS_DEBUG": "true",
         "CALVA_DEV_GA": "FUBAR-69796730-4",
+        "CALVA_DEV_GA4_ID": "G-FTNZ1YC3ND",
+        "CALVA_DEV_GA4_TOKEN": "_es8QHFXQP2jf7FwUYa_cg",
         "DEBUG": "no-debug-universal-analytics"
       },
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
     },
     {
       "name": "Launch w/ empty folder",
@@ -113,9 +141,11 @@
       "env": {
         "IS_DEBUG": "true",
         "CALVA_DEV_GA": "FUBAR-69796730-4",
+        "CALVA_DEV_GA4_ID": "G-FTNZ1YC3ND",
+        "CALVA_DEV_GA4_TOKEN": "_es8QHFXQP2jf7FwUYa_cg",
         "DEBUG": "no-debug-universal-analytics"
       },
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
     },
     {
       "name": "Theia node launch",
@@ -135,9 +165,11 @@
       "env": {
         "IS_DEBUG": "true",
         "CALVA_DEV_GA": "FUBAR-69796730-4",
+        "CALVA_DEV_GA4_ID": "G-FTNZ1YC3ND",
+        "CALVA_DEV_GA4_TOKEN": "_es8QHFXQP2jf7FwUYa_cg",
         "DEBUG": "no-debug-universal-analytics"
       },
-      "outFiles": ["${workspaceFolder}/dist/**/*.js"]
+      "outFiles": ["${workspaceFolder}/out/**/*.js"]
     },
     {
       "name": "Extension Tests",
@@ -148,6 +180,8 @@
       "env": {
         "IS_DEBUG": "true",
         "CALVA_DEV_GA": "FUBAR-69796730-4",
+        "CALVA_DEV_GA4_ID": "G-FTNZ1YC3ND",
+        "CALVA_DEV_GA4_TOKEN": "_es8QHFXQP2jf7FwUYa_cg",
         "DEBUG": "no-debug-universal-analytics"
       },
       "args": [

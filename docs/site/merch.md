@@ -1,6 +1,6 @@
 ---
-title: Calva T-shirts!
-description: Head over to the our shop and buy yourself and your friends some t-shirts withe the beautiful Calva logo
+title: Calva T-shirts and Stickers!
+description: Head over to the our shop and buy yourself and your friends some t-shirts with the beautiful Calva logo
 search:
   boost: 10
 ---
@@ -13,18 +13,35 @@ In this video, there is a question about where you can buy the Calva T-shirt:
 
 You couldn't, then. But now you can! On Amazon.
 
-## Zero profit
+!!! Note "Zero profit"
 
-To keep the admin of this shop to a minimum the merch is sold at production prize. There is no royalty going to anyone in the Calva team when you buy one of these t-shirts. You will represent, which is certainly a way to support the project. You are of course encouraged to support us via sponsoring as well:
+    To keep the admin of this shop to a minimum the merch is sold at production prize (or as close to production prize as the respective store allows). There is no royalty going to anyone in the Calva team when you buy one of these t-shirts. You will represent, which is certainly a way to support the project. You are of course encouraged to support us via sponsoring as well:
 
-* [Sponsor Peter Strömberg](https://github.com/sponsors/PEZ)
-* [Sponsor Brandon Ringe](https://github.com/sponsors/bpringe)
+    * [Sponsor Peter Strömberg](https://github.com/sponsors/PEZ)
+    * [Sponsor Brandon Ringe](https://github.com/sponsors/bpringe)
 
-## The designs
+
+Calva Merch is available on Zazzle and on Amazon
+
+## Zazzle
+
+### Calva Symbol Sticker
+
+<div style="text-align:center;line-height:150%"> <a href="https://www.zazzle.com/calva_symbol_sticker-256317900409469244" rel="nofollow" > <img src="https://rlv.zcache.com/calva_symbol_sticker-rbafc86bf7a504ac5a0171442a102babc_u092j_325.jpg?rlvnet=1&bg=0xffffff" alt="Calva Symbol Sticker" style="border:0;" /> </a> <br /> <a href="https://www.zazzle.com/calva_symbol_sticker-256317900409469244" rel="nofollow" >Calva Symbol Sticker</a> <br />by <a href="https://www.zazzle.com/store/betterthantomorrow" rel="nofollow">BetterThanTomorrow</a> </div>
+
+
+### Joyride Symbol Sticker
+
+<div style="text-align:center;line-height:150%"> <a href="https://www.zazzle.com/joyride_symbol_sticker-256104980024132578" rel="nofollow" > <img src="https://rlv.zcache.com/joyride_symbol_sticker-re810cdc6d7fe405090296540bc3bd9da_u053h_325.jpg?rlvnet=1&bg=0xffffff" alt="Joyride Symbol Sticker" style="border:0;" /> </a> <br /> <a href="https://www.zazzle.com/joyride_symbol_sticker-256104980024132578" rel="nofollow" >Joyride Symbol Sticker</a> <br />by <a href="https://www.zazzle.com/store/betterthantomorrow" rel="nofollow">BetterThanTomorrow</a> </div>
+
+
+## Amazon Merch
+
+### The designs
 
 There are four design, all featuring the Calva symbol (the Calva glass), which are all available for a **Standard T-shirt, in men's, women's and kid's cut, and in some different colors. In the `.com` store there are also **Premium T-shirts**.
 
-### Symbol + Logo
+#### Symbol + Logo
 
 ![Calva T-shirt Symbol + Logo](/images/merch/t-shirt-calva-symbol-and-logo.png)
 
@@ -40,7 +57,7 @@ Available at:
 * [https://www.amazon.co.jp/dp/B097YZVMC4](https://www.amazon.co.jp/dp/B097YZVMC4)
 
 
-### Symbol + Logo + We do it with Rich Comments
+#### Symbol + Logo + We do it with Rich Comments
 
 The Calva symbol and Logo front, Rich Comments back.
 
@@ -58,7 +75,7 @@ Available at:
 * [https://www.amazon.co.jp/dp/B09C4P45MR](https://www.amazon.co.jp/dp/B09C4P45MR)
 
 
-### Symbol Only
+#### Symbol Only
 
 ![Calva T-shirt Symbol](/images/merch/t-shirt-calva-symbol.png)
 
@@ -74,7 +91,7 @@ Available at:
 * [https://www.amazon.co.jp/dp/B09B4XN3HY](https://www.amazon.co.jp/dp/B09B4XN3HY)
 
 
-### Symbol + We do it with Rich Comments
+#### Symbol + We do it with Rich Comments
 
 The Calva symbol front, Rich Comments Back.
 

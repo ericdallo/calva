@@ -4,35 +4,44 @@ import { RangeEditProvider } from './providers/range_formatter';
 import * as formatter from './format';
 import * as inferer from './infer';
 import * as docmirror from '../../doc-mirror/index';
-import * as config from './config';
+import * as config from '../../formatter-config';
 import * as calvaConfig from '../../config';
 
-function getLanguageConfiguration(autoIndentOn: boolean): vscode.LanguageConfiguration {
-  return {
-    onEnterRules:
-      autoIndentOn && calvaConfig.getConfig().format
-        ? [
-            // When Calva is the formatter disable all vscode default indentation
-            // (By outdenting a lot, which is the only way I have found that works)
-            // TODO: Make it actually consider whether Calva is the formatter or not
-            {
-              beforeText: /.*/,
-              action: {
-                indentAction: vscode.IndentAction.Outdent,
-                removeText: Number.MAX_VALUE,
-              },
-            },
-          ]
-        : [],
-  };
+function isOldIndentEngineInPlay(): boolean {
+  return (
+    !!config.formatOnTypeEnabled() &&
+    !vscode.workspace.getConfiguration('calva.fmt').get('newIndentEngine')
+  );
 }
 
-export async function activate(context: vscode.ExtensionContext) {
-  docmirror.activate();
-  vscode.languages.setLanguageConfiguration(
-    'clojure',
-    getLanguageConfiguration(await config.getConfig()['format-as-you-type'])
+function getLanguageConfiguration(): vscode.LanguageConfiguration {
+  const languageConfiguration = {
+    onEnterRules: isOldIndentEngineInPlay()
+      ? [
+          // When cljfmt is used for indenting, disable all vscode default indentation
+          // (By outdenting a lot, which is the only way I have found that works)
+          {
+            beforeText: /.*/,
+            action: {
+              indentAction: vscode.IndentAction.Outdent,
+              removeText: Number.MAX_VALUE,
+            },
+          },
+        ]
+      : [],
+  };
+  console.log('Issue #2071: languageConfiguration', languageConfiguration);
+  console.log('Issue #2071: formatOnType?', config.formatOnTypeEnabled());
+  console.log(
+    'Issue #2071: newIndentEngine?',
+    vscode.workspace.getConfiguration('calva.fmt').get('newIndentEngine')
   );
+  return languageConfiguration;
+}
+
+export function activate(context: vscode.ExtensionContext) {
+  docmirror.activate();
+  vscode.languages.setLanguageConfiguration('clojure', getLanguageConfiguration());
   context.subscriptions.push(
     vscode.commands.registerTextEditorCommand(
       'calva-fmt.formatCurrentForm',
@@ -82,12 +91,10 @@ export async function activate(context: vscode.ExtensionContext) {
     )
   );
   vscode.window.onDidChangeActiveTextEditor(inferer.updateState);
-  vscode.workspace.onDidChangeConfiguration(async (e) => {
-    if (e.affectsConfiguration('calva.fmt.formatAsYouType')) {
-      vscode.languages.setLanguageConfiguration(
-        'clojure',
-        getLanguageConfiguration(await config.getConfig()['format-as-you-type'])
-      );
+  vscode.workspace.onDidChangeConfiguration((e) => {
+    if (e.affectsConfiguration('editor.formatOnType')) {
+      console.log('Issue #2071: editor.formatOnType changed, updating language configuration');
+      vscode.languages.setLanguageConfiguration('clojure', getLanguageConfiguration());
     }
   });
 }

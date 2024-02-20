@@ -1,11 +1,9 @@
 import * as vscode from 'vscode';
+import axios from 'axios';
 import * as UA from 'universal-analytics';
 import * as uuid from 'uuidv4';
 import * as os from 'os';
 import { isUndefined } from 'lodash';
-
-// var debug = require('debug');
-// debug.log = console.info.bind(console);
 
 function userAllowsTelemetry(): boolean {
   const config = vscode.workspace.getConfiguration('telemetry');
@@ -21,6 +19,9 @@ export default class Analytics {
     ? process.env.CALVA_DEV_GA
     : 'FUBAR-69796730-3'
   ).replace(/^FUBAR/, 'UA');
+  private GA4_TOKEN = process.env.CALVA_DEV_GA4_TOKEN ?? 'GgrUWszmTo2FG538YCUGpw';
+  private GA4_MEASUREMENT_ID = process.env.CALVA_DEV_GA4_ID ?? 'G-HYZ3MX6DL1';
+  private ua: string;
 
   constructor(context: vscode.ExtensionContext) {
     // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
@@ -61,6 +62,47 @@ export default class Analytics {
     return this;
   }
 
+  async logGA4Pageview(path: string) {
+    if (!userAllowsTelemetry()) {
+      return;
+    }
+    const userAgent = `Mozilla/5.0 (${os.platform()}; ${os.release()}; ${os.type}) Code/${
+      vscode.version
+    } Calva/${this.extensionVersion}`;
+
+    try {
+      return axios
+        .post(
+          `https://www.google-analytics.com/mp/collect?measurement_id=${this.GA4_MEASUREMENT_ID}&api_secret=${this.GA4_TOKEN}`,
+          {
+            client_id: this.userID(),
+            user_id: this.userID(),
+            events: [
+              {
+                name: 'page_view',
+                params: {
+                  page_location: path,
+                  page_title: path.replace(/^\//, ''),
+                  engagement_time_msec: 1,
+                },
+              },
+            ],
+          },
+          {
+            headers: {
+              'User-Agent': userAgent,
+              'Content-Type': 'application/json',
+            },
+          }
+        )
+        .catch(function (error) {
+          console.log(error);
+        });
+    } catch (error) {
+      console.log(error);
+    }
+  }
+
   logEvent(category: string, action: string, label?: string, value?: string): Analytics {
     if (userAllowsTelemetry()) {
       this.visitor.event({
@@ -78,4 +120,26 @@ export default class Analytics {
       this.visitor.send();
     }
   }
+}
+
+async function getExternalIPAddress() {
+  try {
+    const response = await axios.get('https://api.ipify.org');
+    return response.data;
+  } catch (error) {
+    return '127.0.0.1';
+  }
+}
+
+// Hashes a UUID to a string of numbers, separated by dots.
+// Used to generate a serial-number-like ID for use in the user agent string.
+// Lossy, but good enough for our purposes.
+function hashUuid(uuid: string): string {
+  const simpleHash = (s: string): number => {
+    const modulo = s.length * 100;
+    return s.split('').reduce((hash, char) => {
+      return (hash * 31 + char.charCodeAt(0)) % modulo;
+    }, 0);
+  };
+  return uuid.split('-').map(simpleHash).join('.');
 }

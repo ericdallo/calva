@@ -1,5 +1,5 @@
 import * as vscode from 'vscode';
-import select from '../select';
+import * as select from '../select';
 import * as paredit from '../cursor-doc/paredit';
 import * as docMirror from '../doc-mirror/index';
 import * as cursorTextGetter from './cursor-get-text';
@@ -30,6 +30,28 @@ export function currentFormText(doc: vscode.TextDocument, pos: vscode.Position):
   return _currentFormText(doc, false, pos);
 }
 
+export function currentPairText(doc: vscode.TextDocument, pos: vscode.Position): SelectionAndText {
+  const cursorDoc = docMirror.getDocument(doc);
+  const cursorPos = doc.offsetAt(pos);
+  const cursor = cursorDoc.getTokenCursor(cursorPos);
+  if (paredit.isInPairsList(cursor, paredit.bindingForms)) {
+    const range = paredit.currentSexpsRange(cursorDoc, cursor, cursorPos, true);
+    const selection = select.selectionFromOffsetRange(doc, range);
+    return [selection, doc.getText(selection)];
+  } else {
+    return [undefined, ''];
+  }
+}
+
+export function currentFileText(doc: vscode.TextDocument): SelectionAndText {
+  const text = doc.getText();
+  if (text) {
+    return [select.selectionFromOffsetRange(doc, [0, text.length - 1]), text];
+  } else {
+    return [undefined, ''];
+  }
+}
+
 export function currentEnclosingFormText(
   doc: vscode.TextDocument,
   pos: vscode.Position
@@ -41,9 +63,15 @@ export function currentEnclosingFormText(
   return [undefined, ''];
 }
 
-export function currentFunction(doc: vscode.TextDocument): SelectionAndText {
+export function _currentFunction(doc: vscode.TextDocument, topLevel = false): SelectionAndText {
   if (doc) {
-    const tokenCursor = docMirror.getDocument(doc).getTokenCursor();
+    const cursorDoc = docMirror.getDocument(doc);
+    const tokenCursor = cursorDoc.getTokenCursor();
+    if (topLevel) {
+      tokenCursor.set(
+        cursorDoc.getTokenCursor(tokenCursor.rangeForDefun(cursorDoc.selection.active)[1] - 1)
+      );
+    }
     const [start, end] = tokenCursor.getFunctionSexpRange();
     if (start && end) {
       const startPos = doc.positionAt(start);
@@ -53,6 +81,14 @@ export function currentFunction(doc: vscode.TextDocument): SelectionAndText {
     }
   }
   return [undefined, ''];
+}
+
+export function currentFunction(doc: vscode.TextDocument): SelectionAndText {
+  return _currentFunction(doc, false);
+}
+
+export function currentTopLevelFunction(doc: vscode.TextDocument): SelectionAndText {
+  return _currentFunction(doc, true);
 }
 
 function selectionAndText(
@@ -77,11 +113,11 @@ export function currentEnclosingFormToCursor(
   return selectionAndText(doc, cursorTextGetter.currentEnclosingFormToCursor, pos);
 }
 
-export function currentTopLevelFunction(
+export function currentTopLevelDefined(
   doc: vscode.TextDocument,
   pos: vscode.Position
 ): SelectionAndText {
-  return selectionAndText(doc, cursorTextGetter.currentTopLevelFunction, pos);
+  return selectionAndText(doc, cursorTextGetter.currentTopLevelDefined, pos);
 }
 
 export function currentTopLevelFormToCursor(
@@ -89,6 +125,13 @@ export function currentTopLevelFormToCursor(
   pos: vscode.Position
 ): SelectionAndText {
   return selectionAndText(doc, cursorTextGetter.currentTopLevelFormToCursor, pos);
+}
+
+export function selectionAddingBrackets(
+  doc: vscode.TextDocument,
+  pos: vscode.Position
+): SelectionAndText {
+  return selectionAndText(doc, cursorTextGetter.selectionAddingBrackets, pos);
 }
 
 export function startOFileToCursor(
@@ -120,15 +163,21 @@ export function toEndOfList(doc: vscode.TextDocument): SelectionAndText {
   return fromFn(doc, paredit.rangeToForwardList);
 }
 
-export function currentContext(document: vscode.TextDocument, pos: vscode.Position, prefix = '') {
+export function currentClojureContext(
+  document: vscode.TextDocument,
+  pos: vscode.Position,
+  prefix = ''
+) {
   const result = {};
-  result[prefix + 'currentForm'] = currentFormText(document, pos)[1];
-  result[prefix + 'enclosingForm'] = currentEnclosingFormText(document, pos)[1];
-  result[prefix + 'topLevelForm'] = currentTopLevelFormText(document, pos)[1];
-  result[prefix + 'currentFn'] = currentFunction(document)[1];
-  result[prefix + 'topLevelDefinedForm'] = currentTopLevelFunction(document, pos)[1];
-  result[prefix + 'head'] = toStartOfList(document)[1];
-  result[prefix + 'tail'] = toEndOfList(document)[1];
+  result[prefix + 'currentForm'] = currentFormText(document, pos);
+  result[prefix + 'currentPair'] = currentPairText(document, pos);
+  result[prefix + 'enclosingForm'] = currentEnclosingFormText(document, pos);
+  result[prefix + 'topLevelForm'] = currentTopLevelFormText(document, pos);
+  result[prefix + 'currentFn'] = currentFunction(document);
+  result[prefix + 'topLevelDefinedForm'] = currentTopLevelDefined(document, pos);
+  result[prefix + 'topLevelFn'] = currentTopLevelFunction(document);
+  result[prefix + 'head'] = toStartOfList(document);
+  result[prefix + 'tail'] = toEndOfList(document);
 
   return result;
 }

@@ -118,12 +118,13 @@ Default keybinding                | Action | Description
  `ctrl+alt+shift+s`                        | **Wrap Around []** | Wraps the current form, or selection, with square brackets. <br> ![](images/paredit/wrap-around-brackets.gif)
  `ctrl+alt+shift+c`                        | **Wrap Around {}** | Wraps the current form, or selection, with curlies. <br> ![](images/paredit/wrap-around-curlies.gif)
  `ctrl+alt+shift+q`                        | **Wrap Around ""** | Wraps the current form, or selection, with double quotes. Inside strings it will quote the quotes. <br> ![](images/paredit/wrap-around-quotes.gif)
- `ctrl+alt+r`<br>`ctrl+alt+p`/`s`/`c`/`q`                        | **Rewrap** | Changes enclosing brackets of the current form to parens/square brackets/curlies/double quotes.. <br> ![](images/paredit/rewrap.gif)
+ `ctrl+alt+r`<br>`ctrl+alt+p`/`s`/`c`/`q`/`h`                        | **Rewrap** | Changes enclosing brackets of the current form to parens/square brackets/curlies/double quotes and set (`#{}`) <br> ![](images/paredit/rewrap.gif)
 
 !!! Note "Copy to Clipboard when killing text"
     You can have the *kill* commands always copy the deleted code to the clipboard by setting `calva.paredit.killAlsoCutsToClipboard` to `true`.  If you want to do this more on-demand, you can kill text by using the [selection commands](#selecting) and then *Cut* once you have the selection.
 
-
+!!! Note "clojure-lsp drag fwd/back overlap"
+    As an experimental feature, the two commands for dragging forms forward and backward have clojure-lsp alternativs. See the [clojure-lsp](clojure-lsp.md#clojure-lsp-drag-fwdback) page.
 
 ### Drag bindings forward/backward
 
@@ -138,8 +139,6 @@ And like so (wait for it):
 ## About the Keyboard Shortcuts
 
 Care has been put in to making the default keybindings somewhat logical, easy to use, and work with most keyboard layouts. Slurp and barf forward are extra accessible to go with the recommendation to learn using these two super handy editing commands.
-
-You can choose to disable all default key bindings by configuring `calva.paredit.defaultKeyMap` to `none`. (Then you probably also want to register your own shortcuts for the commands you often use.)
 
 You can relax how Paredit's shortcuts replace VS Code built in shortcuts a bit by setting `calva.paredit.hijackVSCodeDefaults` to `false`.
 

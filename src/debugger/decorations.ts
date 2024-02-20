@@ -4,7 +4,7 @@ import { Location } from 'vscode-languageserver-protocol';
 import * as _ from 'lodash';
 import { NReplSession } from '../nrepl';
 import * as util from '../utilities';
-import lsp from '../lsp/main';
+import * as lsp from '../lsp';
 import { getStateValue } from '../../out/cljs-lib/cljs-lib';
 import * as replSession from '../nrepl/repl-session';
 
@@ -38,45 +38,45 @@ async function update(
 ): Promise<void> {
   if (/(\.clj)$/.test(editor.document.fileName)) {
     if (cljSession && util.getConnectedState() && lspClient) {
-      const instrumentedDefLists = (await cljSession.listDebugInstrumentedDefs()).list;
-
-      instrumentedSymbolReferenceLocations = await instrumentedDefLists.reduce(
-        async (
-          iSymbolRefLocations: Promise<InstrumentedSymbolReferenceLocations>,
-          [namespace, ...instrumentedDefs]: string[]
-        ) => {
-          const namespacePath = (await cljSession.nsPath(namespace)).path;
-          const docUri = vscode.Uri.parse(namespacePath, true);
-          const decodedDocUri = decodeURIComponent(docUri.toString());
-          const docSymbols = (await lsp.getDocumentSymbols(lspClient, decodedDocUri))[0].children;
-          const instrumentedDocSymbols = docSymbols.filter((s) =>
-            instrumentedDefs.includes(s.name)
-          );
-          const instrumentedDocSymbolsReferenceRanges = await Promise.all(
-            instrumentedDocSymbols.map((s) => {
-              const position = {
-                line: s.selectionRange.start.line,
-                character: s.selectionRange.start.character,
-              };
-              return lsp.getReferences(lspClient, decodedDocUri, position);
-            })
-          );
-          const currentNsSymbolsReferenceLocations = instrumentedDocSymbols.reduce(
-            (currentLocations, symbol, i) => {
-              return {
-                ...currentLocations,
-                [symbol.name]: instrumentedDocSymbolsReferenceRanges[i],
-              };
-            },
-            {}
-          );
-          return {
-            ...(await iSymbolRefLocations),
-            [namespace]: currentNsSymbolsReferenceLocations,
-          };
-        },
-        {}
-      );
+      const instrumentedDefs = await cljSession.listDebugInstrumentedDefs();
+      if (instrumentedDefs) {
+        const instrumentedDefLists = await instrumentedDefs.list;
+        instrumentedSymbolReferenceLocations = await instrumentedDefLists.reduce(
+          async (
+            iSymbolRefLocations: Promise<InstrumentedSymbolReferenceLocations>,
+            [namespace, ...instrumentedDefs]: string[]
+          ) => {
+            const docSymbols = (await lsp.api.getDocumentSymbols(lspClient, editor.document.uri))[0]
+              .children;
+            const instrumentedDocSymbols = docSymbols.filter((s) =>
+              instrumentedDefs.includes(s.name)
+            );
+            const instrumentedDocSymbolsReferenceRanges = await Promise.all(
+              instrumentedDocSymbols.map((s) => {
+                const position = {
+                  line: s.selectionRange.start.line,
+                  character: s.selectionRange.start.character,
+                };
+                return lsp.api.getReferences(lspClient, editor.document.uri, position);
+              })
+            );
+            const currentNsSymbolsReferenceLocations = instrumentedDocSymbols.reduce(
+              (currentLocations, symbol, i) => {
+                return {
+                  ...currentLocations,
+                  [symbol.name]: instrumentedDocSymbolsReferenceRanges[i],
+                };
+              },
+              {}
+            );
+            return {
+              ...(await iSymbolRefLocations),
+              [namespace]: currentNsSymbolsReferenceLocations,
+            };
+          },
+          {}
+        );
+      }
     } else {
       instrumentedSymbolReferenceLocations = {};
     }
@@ -118,8 +118,9 @@ function triggerUpdateAndRenderDecorations() {
     const editor = util.tryToGetActiveTextEditor();
     if (editor) {
       timeout = setTimeout(() => {
+        const clientProvider = lsp.getClientProvider();
         const cljSession = replSession.getSession('clj');
-        const lspClient = getStateValue(lsp.LSP_CLIENT_KEY);
+        const lspClient = clientProvider.getClientForDocumentUri(editor.document.uri);
         void update(editor, cljSession, lspClient).then(renderInAllVisibleEditors);
       }, 50);
     }

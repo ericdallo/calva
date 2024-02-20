@@ -139,9 +139,11 @@ It is the piggieback middleware there telling you that you can unpromote the REP
 
 Because Calva uses the Clojure REPL connection to spawn the ClojureScript REPL, and because Calva only handles one Clojure REPL per VS Code window, some projects need special handling by the user.
 
-If your full stack project is using shadow-cljs for the frontend, like [this Fulcro template project](https://github.com/fulcrologic/fulcro-template) does, maybe you first try to Jack-In to your backend Clojure REPL, and then to your shadow-cljs frontend. This works if you do it in separate VS Code windows, but if you do it in the same window, the second Jack-In will kill the backend session!
+If your full stack project is using shadow-cljs for the frontend, like [this Fulcro template project](https://github.com/fulcrologic/fulcro-template) does, maybe you first try to Jack-In to your backend Clojure REPL, and then to your shadow-cljs frontend. This works if you do it in separate VS Code windows, but if you do it in the same window, the second Jack-In will kill the backend session! See also [connect shadow-cljs in fullstack projects](connect.md#shadow-cljs-in-full-stack-projects).
 
 See [Workspace Layouts](workspace-layouts.md) for tips about how to open the same project folder in two separate VS Code windows.
+
+Please also consider to play around with starting the REPL and ClojureScript wiring entirely from the terminal, see [this example project](https://github.com/PEZ/shadow-w-backend) for some instructions on that. You can also use that project together with the `nil` for `connectCode` sequence mentioned above.
 
 ## Please Grab your Calva Jack-In Certificate
 
@@ -150,3 +152,4 @@ There, you now know all there is to know about Calva Jack-In.
 Just kidding, there are a few more details to it, some of which might find their way into this article at a later time.
 
 To really get to know it all, you will need to spend some time with the Calva Jack-In code. Head over to the [Calva Development Wiki](https://github.com/BetterThanTomorrow/calva/wiki) to learn how to hack on Calva.
+

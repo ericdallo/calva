@@ -1,5 +1,5 @@
 import * as assert from 'assert';
-import { before, after } from 'mocha';
+import { before, after, beforeEach } from 'mocha';
 import * as path from 'path';
 import * as testUtil from './util';
 import * as state from '../../../state';
@@ -11,6 +11,18 @@ import * as outputWindow from '../../../results-output/results-doc';
 import { commands } from 'vscode';
 import { getDocument } from '../../../doc-mirror';
 import * as projectRoot from '../../../project-root';
+import { updateWorkspaceConfig } from '../../../config';
+
+const settingsUri: vscode.Uri = vscode.Uri.joinPath(
+  vscode.workspace.workspaceFolders[0].uri,
+  '.vscode',
+  'settings.json'
+);
+const settingsBackupUri: vscode.Uri = vscode.Uri.joinPath(
+  vscode.workspace.workspaceFolders[0].uri,
+  '.vscode',
+  'settings.json.bak'
+);
 
 // TODO: Add more smoke tests for the extension
 // TODO: Start building integration test coverage
@@ -18,12 +30,19 @@ import * as projectRoot from '../../../project-root';
 suite('Jack-in suite', () => {
   const suite = 'Jack-in';
 
-  before(() => {
+  before(async () => {
     testUtil.showMessage(suite, `suite starting!`);
+    await vscode.workspace.fs.copy(settingsUri, settingsBackupUri, { overwrite: true });
   });
 
-  after(() => {
+  after(async () => {
+    console.log(suite, 'workspaceRoot', vscode.workspace.workspaceFolders[0].uri.fsPath);
     testUtil.showMessage(suite, `suite done!`);
+    await vscode.workspace.fs.delete(settingsBackupUri);
+  });
+
+  beforeEach(async () => {
+    await vscode.workspace.fs.copy(settingsBackupUri, settingsUri, { overwrite: true });
   });
 
   test('start repl and connect (jack-in)', async function () {
@@ -31,76 +50,114 @@ suite('Jack-in suite', () => {
 
     const testFilePath = await startJackInProcedure(suite, 'calva.jackIn', 'deps.edn');
 
-    while (!util.getConnectedState()) {
-      testUtil.log(suite, 'waiting for connect...');
-      await testUtil.sleep(200);
-    }
-    await testUtil.sleep(500); // wait a little longer for repl output to be done
-    testUtil.log(suite, 'connected to repl');
+    await loadAndAssert(suite, testFilePath);
 
-    const resultsDoc = getDocument(await outputWindow.openResultsDoc());
+    await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
+    testUtil.log(suite, 'test.clj closed');
+  });
 
-    // focus the clojure file
-    await vscode.workspace.openTextDocument(testFilePath).then((doc) =>
-      vscode.window.showTextDocument(doc, {
-        preserveFocus: false,
-      })
-    );
-    testUtil.log(suite, 'opened document again');
+  test('Jack-in works with auto-selected project type', async () => {
+    testUtil.log(suite, 'Jack-in works with auto-selected project type');
 
-    await commands.executeCommand('calva.loadFile');
-    const reversedLines = resultsDoc.model.lineInputModel.lines.reverse();
-    assert.deepEqual(
-      ['; Evaluating file: test.clj', 'bar', 'nil', 'clj꞉test꞉> ', ''].reverse(),
-      reversedLines.slice(0, 5).map((v) => v.text)
-    );
+    const settings = {
+      'calva.replConnectSequences': [
+        {
+          projectType: 'deps.edn',
+          name: 'auto-select',
+          autoSelectForJackIn: true,
+          projectRootPath: ['.'],
+        },
+      ],
+    };
+    await writeSettings(settings);
+    const testFilePath = await startJackInProcedure(suite, 'calva.jackIn', undefined, true);
+    await loadAndAssert(suite, testFilePath);
 
     await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     testUtil.log(suite, 'test.clj closed');
   });
 
   test('Copy Jack-in command line', async function () {
-    console.log('Copy Jack-in command line');
+    testUtil.log('Copy Jack-in command line');
 
     await startJackInProcedure(suite, 'calva.copyJackInCommandToClipboard', 'deps.edn');
 
     const cmdLine = await vscode.env.clipboard.readText();
+    testUtil.log(suite, 'cmdLine', cmdLine);
 
-    assert.ok(cmdLine.startsWith('clojure'));
+    assert.ok(cmdLine.includes('clojure'));
 
     await vscode.commands.executeCommand('workbench.action.closeActiveEditor');
     testUtil.log(suite, 'test.clj closed');
   });
 });
 
-async function startJackInProcedure(suite: string, cmdId: string, projectType: string) {
+async function loadAndAssert(suite: string, testFilePath: string) {
+  const resultsDoc = await waitForResult(suite);
+
+  // focus the clojure file
+  await vscode.workspace.openTextDocument(testFilePath).then((doc) =>
+    vscode.window.showTextDocument(doc, {
+      preserveFocus: false,
+    })
+  );
+  testUtil.log(suite, 'opened document again');
+
+  await commands.executeCommand('calva.loadFile');
+  const reversedLines = resultsDoc.model.lineInputModel.lines.reverse();
+  assert.deepEqual(
+    ['bar', 'nil', 'clj꞉test꞉> '].reverse(),
+    reversedLines.slice(1, 4).map((v) => v.text)
+  );
+}
+
+async function writeSettings(settings: any): Promise<void> {
+  const settingsData = JSON.stringify(settings, null, 2);
+  await vscode.workspace.fs.writeFile(settingsUri, Buffer.from(settingsData));
+  console.log(`Settings written to ${settingsUri.fsPath}`);
+}
+
+async function waitForResult(suite: string) {
+  while (!util.getConnectedState()) {
+    testUtil.log(suite, 'waiting for connect...');
+    await testUtil.sleep(200);
+  }
+  await testUtil.sleep(500); // wait a little longer for repl output to be done
+  testUtil.log(suite, 'connected to repl');
+
+  return getDocument(await outputWindow.openResultsDoc());
+}
+
+async function startJackInProcedure(
+  suite: string,
+  cmdId: string,
+  projectType: string,
+  autoSelectProjectRoot = false
+) {
   const testFilePath = path.join(testUtil.testDataDir, 'test.clj');
   await testUtil.openFile(testFilePath);
   testUtil.log(suite, 'test.clj opened');
 
-  const projectRootPath = await projectRoot.findClosestProjectRootPath();
-  const projetcRootUri = vscode.Uri.file(projectRootPath);
+  const projectRootUri = projectRoot.findClosestParent(
+    vscode.window.activeTextEditor?.document.uri,
+    await projectRoot.findProjectRoots()
+  );
   // Project type pre-select, qps = quickPickSingle
-  const saveAs = `qps-${projetcRootUri.toString()}/jack-in-type`;
+  const saveAs = `qps-${projectRootUri.toString()}/jack-in-type`;
   await state.extensionContext.workspaceState.update(saveAs, projectType);
 
-  const res = commands.executeCommand(cmdId);
+  let resolved = false;
+  void commands.executeCommand(cmdId).then(() => {
+    resolved = true;
+  });
 
-  // Project root quick pick
-  while (util.quickPickActive === undefined) {
+  while (!resolved) {
+    if (!autoSelectProjectRoot) {
+      // Project root quick pick
+      await commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
+    }
     await testUtil.sleep(50);
   }
-  await util.quickPickActive;
-  await commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
 
-  // Project type quickpick
-  // pre-select deps.edn as the repl connect sequence
-  while (util.quickPickActive === undefined) {
-    await testUtil.sleep(50);
-  }
-  await util.quickPickActive;
-  await commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
-
-  await res;
   return testFilePath;
 }

@@ -5,15 +5,8 @@
             [calva.js-utils :refer [jsify cljify]]
             [calva.fmt.util :as util]
             [calva.parse :refer [parse-clj-edn]]
-            [clojure.string]))
-
-(defn- merge-default-indents
-  "Merges onto default-indents.
-   The :replace metadata hint allows to replace defaults."
-  [indents]
-  (if (:replace (meta indents))
-    indents
-    (merge cljfmt/default-indents indents)))
+            [clojure.string]
+            [clojure.core :as c]))
 
 (def ^:private default-fmt
   {:remove-surrounding-whitespace? true
@@ -22,20 +15,35 @@
    :insert-missing-whitespace? true
    :align-associative? false})
 
-(defn merge-cljfmt
+(defn merge-default-config
   [fmt]
   (as-> fmt $
-    (update $ :indents merge-default-indents)
     (merge default-fmt $)))
+
+(defn- convert-legacy-keys [config]
+  (cond-> config
+    (:legacy/merge-indents? config)
+    (-> (assoc :extra-indents (:indents config))
+        (dissoc :indents))))
+
+(defn- convert-to-old-config [config]
+  (let [new-config (convert-legacy-keys config)]
+    (if (:extra-indents new-config)
+      (-> new-config
+          (assoc :indents (:extra-indents new-config))
+          (assoc :indents (merge cljfmt/default-indents (:extra-indents new-config))))
+      new-config)))
 
 (defn- read-cljfmt
   [s]
   (try
-    (as-> s $
-      (parse-clj-edn $)
-      (merge-cljfmt $))
+    (-> s
+        parse-clj-edn
+        convert-legacy-keys)
     (catch js/Error e
-      {:error (.-message e)})))
+      (merge default-fmt
+             {:error (.-message e)
+              :indents cljfmt/default-indents}))))
 
 (defn- reformat-string [range-text {:keys [align-associative?
                                            remove-multiple-non-indenting-spaces?] :as config}]
@@ -45,9 +53,11 @@
     (if (or align-associative?
             (:align-associative? cljfmt-options))
       (pez-cljfmt/reformat-string range-text (-> cljfmt-options
+                                                 convert-to-old-config
                                                  (assoc :align-associative? true)
                                                  (dissoc :remove-multiple-non-indenting-spaces?)))
       (cljfmt/reformat-string range-text (-> cljfmt-options
+                                             convert-legacy-keys
                                              (assoc :remove-multiple-non-indenting-spaces?
                                                     trim-space-between?))))))
 
@@ -66,14 +76,14 @@
   (def s "[:foo\n\n(foo\n(bar))]")
   #_(def s "(defn\n0\n#_)")
   (format-text #_s
-               {:range-text s
-                :eol "\n"
-                :config {:cljfmt-options
-                         {:remove-surrounding-whitespace? false
-                          :indents {"foo" [["inner" 0]]}
-                          :remove-trailing-whitespace? false
-                          :remove-consecutive-blank-lines? false
-                          :align-associative? true}}}))
+   {:range-text s
+    :eol "\n"
+    :config {:cljfmt-options
+             {:remove-surrounding-whitespace? false
+              :indents {"foo" [["inner" 0]]}
+              :remove-trailing-whitespace? false
+              :remove-consecutive-blank-lines? false
+              :align-associative? true}}}))
 
 (defn extract-range-text
   [{:keys [all-text range]}]
@@ -83,7 +93,6 @@
   "Figure out if `:current-line` is empty"
   [{:keys [current-line]}]
   (some? (re-find #"^[\s,]*$" current-line)))
-
 
 (defn indent-before-range
   "Figures out how much extra indentation to add based on the length of the line before the range"
@@ -97,14 +106,12 @@
           (last)
           (count)))))
 
-
 (defn add-head-and-tail
   "Splits `:all-text` at `:idx` in `:head` and `:tail`"
   [{:keys [all-text idx] :as m}]
   (-> m
       (assoc :head (subs all-text 0 idx)
              :tail (subs all-text idx))))
-
 
 (defn add-current-line
   "Finds the text of the current line in `text` from cursor position `index`"
@@ -114,14 +121,12 @@
              (str (second (re-find #"\n?(.*)$" head))
                   (second (re-find #"^(.*)\n?" tail))))))
 
-
 (defn- normalize-indents
   "Normalizes indents based on where the text starts on the first line"
   [{:keys [range-text eol] :as m}]
   (let [indent-before (apply str (repeat (indent-before-range m) " "))
         lines (clojure.string/split range-text #"\r?\n(?!\s*;)" -1)]
     (assoc m :range-text (clojure.string/join (str eol indent-before) lines))))
-
 
 (defn index-for-tail-in-range
   "Find index for the `tail` in `text` disregarding whitespace"
@@ -168,7 +173,6 @@
                          :idx 6
                          :range [0 18]}))
 
-
 (defn add-indent-token-if-empty-current-line
   "If `:current-line` is empty add an indent token at `:idx`"
   [{:keys [head tail range] :as m}]
@@ -181,7 +185,6 @@
         (assoc m1 :range-text (extract-range-text m1)))
       m)))
 
-
 (defn remove-indent-token-if-empty-current-line
   "If an indent token was added, lets remove it. Not forgetting to shrink `:range`"
   [{:keys [range-text range new-index] :as m}]
@@ -192,16 +195,19 @@
 
 (def trailing-bracket_symbol "_calva-fmt-trail-symbol_")
 (def trailing-bracket_pattern (re-pattern (str "_calva-fmt-trail-symbol_\\)$")))
+(def rich-comment-keyword :rcf)
+(def trailing-rcf-marker-pattern (re-pattern (str "(" rich-comment-keyword "|#_\\S+)\\s*\\)$")))
 
 (defn add-trail-symbol-if-comment
   "If the `range-text` is a comment, add a symbol at the end, preventing the last paren from folding"
   [{:keys [range all-text config idx] :as m}]
-  (let [keep-trailing-bracket-on-own-line?
+  (let [range-text (extract-range-text m)
+        keep-trailing-bracket-on-own-line?
         (and (:keep-comment-forms-trail-paren-on-own-line? config)
-             (:comment-form? config))]
+             (:comment-form? config)
+             (not (re-find trailing-rcf-marker-pattern range-text)))]
     (if keep-trailing-bracket-on-own-line?
-      (let [range-text (extract-range-text m)
-            new-range-text (clojure.string/replace
+      (let [new-range-text (clojure.string/replace
                             range-text
                             #"\n{0,1}[ \t,]*\)$"
                             (str "\n" trailing-bracket_symbol ")"))
@@ -245,7 +251,6 @@
   "Formats the enclosing range of text surrounding idx"
   [{:keys [range] :as m}]
   (-> m
-      (update-in [:config :cljfmt-options] merge-cljfmt)
       (add-trail-symbol-if-comment)
       (add-head-and-tail)
       (add-current-line)
@@ -254,7 +259,9 @@
       (index-for-tail-in-range)
       (remove-indent-token-if-empty-current-line)
       (remove-trail-symbol-if-comment range)))
+(comment
 
+  :rcf)
 (defn format-text-at-idx-on-type
   "Relax formating some when used as an on-type handler"
   [m]
@@ -289,44 +296,39 @@
         (cljify)
         (assoc-in [:config :cljfmt-options] (parse-clj-edn edn)))))
 
-(defn format-text-bridge
+(defn ^:export format-text-bridge
   [^js m]
   (-> m
       (parse-cljfmt-options-string)
-      (update-in [:config :cljfmt-options] merge-cljfmt)
       (format-text)))
 
-(defn format-text-at-range-bridge
+(defn ^:export format-text-at-range-bridge
   [^js m]
   (-> m
       (parse-cljfmt-options-string)
-      (update-in [:config :cljfmt-options] merge-cljfmt)
       (format-text-at-range)))
 
-(defn format-text-at-idx-bridge
+(defn ^:export format-text-at-idx-bridge
   [^js m]
   (-> m
       (parse-cljfmt-options-string)
       (format-text-at-idx)))
 
-(defn format-text-at-idx-on-type-bridge
+(defn ^:export format-text-at-idx-on-type-bridge
   [^js m]
   (-> m
       (parse-cljfmt-options-string)
       (format-text-at-idx-on-type)))
 
-(defn merge-cljfmt-from-string-js-bridge
+(defn ^:export cljfmt-from-string-js-bridge
   [^js s]
   (-> s
       read-cljfmt
       jsify))
 
-(defn merge-cljfmt-js-bridge
-  [^js fmt]
-  (-> fmt
-      js-cljfmt-options->clj
-      merge-cljfmt
-      jsify))
+(defn ^:export get-default-indents-js-bridge
+  []
+  (jsify cljfmt/default-indents))
 
 (comment
   (:range-text (format-text-at-idx-on-type {:all-text "  '([]\n[])" :idx 7})))

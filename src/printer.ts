@@ -1,5 +1,6 @@
 import { getConfig } from './config';
 import { assertIsDefined } from './utilities';
+import * as calvaLib from '../out/cljs-lib/cljs-lib';
 
 export type PrintFnOptions = {
   name: string;
@@ -58,7 +59,16 @@ const zprintExtraOptions = {
 };
 
 export function getServerSidePrinter(pprintOptions: PrettyPrintingOptions) {
-  if (pprintOptions.enabled && pprintOptions.printEngine !== 'calva') {
+  if (pprintOptions.printFn) {
+    const printerFn = pprintOptions.printFn;
+    return getPrinter(
+      pprintOptions,
+      printerFn.name,
+      printerFn?.maxWidthArgument,
+      printerFn?.seqLimitArgument,
+      printerFn?.maxDepthArgument
+    );
+  } else if (pprintOptions.enabled && pprintOptions.printEngine !== 'calva') {
     switch (pprintOptions.printEngine) {
       case 'pprint':
         return getPrinter(
@@ -96,15 +106,6 @@ export function getServerSidePrinter(pprintOptions: PrettyPrintingOptions) {
       default:
         return undefined;
     }
-  } else if (pprintOptions.printFn) {
-    const printerFn = pprintOptions.printFn;
-    return getPrinter(
-      pprintOptions,
-      printerFn.name,
-      printerFn?.maxWidthArgument,
-      printerFn?.seqLimitArgument,
-      printerFn?.maxDepthArgument
-    );
   }
 }
 
@@ -125,4 +126,8 @@ export function getServerSidePrinterDependencies() {
   } else {
     return {};
   }
+}
+
+export function prettyPrint(value: any, options: any = prettyPrintingOptions()) {
+  return calvaLib.prettyPrint(value, options);
 }

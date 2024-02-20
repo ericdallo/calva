@@ -29,7 +29,6 @@ Calva sets some VS Code settings for all Clojure files. Some of these are needed
         "editor.formatOnType": true,
         "editor.autoIndent": "full",
         "editor.formatOnPaste": true,
-        "files.trimTrailingWhitespace": false,
         "editor.matchBrackets": "never",
         "editor.renderIndentGuides": false,
         "editor.parameterHints.enabled": false
@@ -47,6 +46,19 @@ Calva's pretty printing mode can be configured a bit. See [Pretty Printing](ppri
 
 This is highly customizable. See [Syntax highlighting](syntax-highlighting.md)
 
+## Color customizations
+
+Calva defines a set of themable colors which can be provided by the user using [workbench.colorCustomizations](https://code.visualstudio.com/docs/getstarted/themes#_customize-a-color-theme).
+
+```json
+    "workbench.colorCustomizations": {
+        "calva.inlineErrorForegroundColor": "#ff0000",
+        "calva.inlineForegroundColor": "#ff9000"
+    }
+```
+
+<img width="1188" alt="image" src="https://user-images.githubusercontent.com/616193/185307813-c3e9ec7f-9c72-49a5-b1e6-8e350803c4ea.png">
+
 ## Automatic Parameter Hints Poppup
 
 Calva has helpful parameter hints to aid when typing function calls. They look like so:
@@ -59,7 +71,7 @@ To have the hints automatically pop up when you are typing, set `editor.paramete
 
 See [Formatting](formatting.md) for information on how to configure this.
 
-## Jack-in and Connect Sequences
+## Jack-in and Connect
 
 Jack-in and Connect are very customizable through [Custom Connect Sequences](connect-sequences.md).
 
@@ -75,7 +87,7 @@ The versions used are configurable via the VS Code settings `calva.jackInDepende
 
 ## Key bindings
 
-Most of Calva's commands have default keybindings. They are only defaults, though, and you can change keybindings as you wish. To facilitate precision in binding keys Calva keeps some [when clause contexts](https://code.visualstudio.com/api/references/when-clause-contexts) updated. 
+Most of Calva's commands have default keybindings. They are only defaults, though, and you can change keybindings as you wish. To facilitate precision in binding keys Calva keeps some [when clause contexts](https://code.visualstudio.com/api/references/when-clause-contexts) updated.
 
 ### When Clause Contexts
 
@@ -93,9 +105,8 @@ The following contexts are available with Calva:
 * `calva:cursorAfterComment`: `true` when the cursor is adjacent after a line comment
 * `calva:cursorAtStartOfLine`: `true` when the cursor is at the start of a line including any leading whitespace
 * `calva:cursorAtEndOfLine`: `true` when the cursor is at the end of a line including any trailing whitespace
-* `calva:showReplUi`: `false` when Calva's REPL UI is disabled through the corresponding setting
 
-### Some Custom Bindings 
+### Some Custom Bindings
 
 Here is a collection of custom keybindings from here and there.
 
@@ -103,6 +114,7 @@ Here is a collection of custom keybindings from here and there.
 * Replace the default Calva ”prefix”, `ctrl+alt+c` to just `alt+v`: [WebWItch's keybindings.json](https://gist.github.com/conan/aa38688d7daa50804c8a433215dc6dc9) (Please note, that `alt+v` does not work for some locales, but for when it works it is much less clunky than the default prefix).
 * Here the Calva key is switched for `ctrl+,`: [manas_marthi's keybindings](https://gist.github.com/emelens/317f639091f57c3055681b06f0dc791a)
 * [Keybindings for Emacs users](emacs-keybindings.md)
+* Use modifiers and WASD keys for movement and manipulation: [isaksky's keybindings](https://gist.github.com/isaksky/94128cda6297e560dbe75650611993c1)
 
 Are you a vim extension user? See: [Using with VIM extension](vim.md).
 

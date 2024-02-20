@@ -15,6 +15,7 @@ import { getStateValue } from '../out/cljs-lib/cljs-lib';
 import { getConfig } from './config';
 import * as replSession from './nrepl/repl-session';
 import * as getText from './util/get-text';
+import * as customSnippets from './custom-snippets';
 
 function interruptAllEvaluations() {
   if (util.getConnectedState()) {
@@ -23,11 +24,16 @@ function interruptAllEvaluations() {
       msgs.push(msg);
     });
     if (msgs.length) {
-      outputWindow.append(normalizeNewLinesAndJoin(msgs));
+      outputWindow.appendLine(msgs.join('\n'));
     }
-    NReplSession.getInstances().forEach((session, _index) => {
-      session.interruptAll();
-    });
+    try {
+      NReplSession.getInstances().forEach((session, _index) => {
+        session.interruptAll();
+      });
+    } catch (error) {
+      // TODO: Figure out why we never get here.
+      console.error(error);
+    }
     if (nums > 0) {
       void vscode.window.showInformationMessage(`Interrupted ${nums} running evaluation(s).`);
     } else {
@@ -58,7 +64,8 @@ async function addAsComment(
   editor.selection = selection;
 }
 
-async function evaluateCode(
+// TODO: Clean up this mess
+async function evaluateCodeUpdatingUI(
   code: string,
   options,
   selection?: vscode.Selection
@@ -81,7 +88,12 @@ async function evaluateCode(
   const filePath = options.filePath;
   const session: NReplSession = options.session;
   const ns = options.ns;
-  const editor = util.getActiveTextEditor();
+  let editor: vscode.TextEditor;
+  try {
+    editor = util.getActiveTextEditor();
+  } catch (error) {
+    console.log('No active editor');
+  }
   let result = null;
 
   if (code.length > 0) {
@@ -93,7 +105,7 @@ async function evaluateCode(
     const err: string[] = [];
 
     if (outputWindow.getNs() !== ns) {
-      await session.switchNS(ns);
+      await session.evaluateInNs(options.nsForm, outputWindow.getNs());
     }
 
     const context: NReplEvaluation = session.eval(code, ns, {
@@ -101,37 +113,37 @@ async function evaluateCode(
       line: line + 1,
       column: column + 1,
       stdout: (m) => {
-        outputWindow.append(normalizeNewLines(m));
+        outputWindow.append(m);
       },
       stderr: (m) => err.push(m),
       pprintOptions: pprintOptions,
     });
 
     try {
+      if (evaluationSendCodeToOutputWindow) {
+        outputWindow.appendLine(code);
+      }
+
       let value = await context.value;
       value = util.stripAnsi(context.pprintOut || value);
-
-      if (evaluationSendCodeToOutputWindow) {
-        outputWindow.append(code);
-      }
 
       result = value;
 
       if (showResult) {
-        outputWindow.append(value, async (resultLocation) => {
+        outputWindow.appendLine(value, async (resultLocation) => {
           if (selection) {
             const c = selection.start.character;
-            if (options.replace) {
+            if (editor && options.replace) {
               const indent = `${' '.repeat(c)}`,
                 edit = vscode.TextEdit.replace(selection, value.replace(/\n/gm, '\n' + indent)),
                 wsEdit = new vscode.WorkspaceEdit();
               wsEdit.set(editor.document.uri, [edit]);
               void vscode.workspace.applyEdit(wsEdit);
             } else {
-              if (options.comment) {
+              if (editor && options.comment) {
                 await addAsComment(c, value, selection, editor, editor.selection);
               }
-              if (!outputWindow.isResultsDoc(editor.document)) {
+              if (editor && !outputWindow.isResultsDoc(editor.document)) {
                 annotations.decorateSelection(
                   value,
                   selection,
@@ -149,27 +161,27 @@ async function evaluateCode(
         });
         // May need to move this inside of onResultsAppended callback above, depending on desired ordering of appended results
         if (err.length > 0) {
-          const errMsg = `; ${normalizeNewLinesAndJoin(err, true)}`;
+          const errMsg = formatAsLineComments(err.join('\n'));
           if (context.stacktrace) {
             outputWindow.saveStacktrace(context.stacktrace);
-            outputWindow.append(errMsg, (_, afterResultLocation) => {
+            outputWindow.appendLine(errMsg, (_, afterResultLocation) => {
               outputWindow.markLastStacktraceRange(afterResultLocation);
             });
           } else {
-            outputWindow.append(errMsg);
+            outputWindow.appendLine(errMsg);
           }
         }
       }
     } catch (e) {
       if (showErrorMessage) {
         const outputWindowError = err.length
-          ? `; ${normalizeNewLinesAndJoin(err, true)}`
+          ? formatAsLineComments(err.join('\n'))
           : formatAsLineComments(e);
-        outputWindow.append(outputWindowError, async (resultLocation, afterResultLocation) => {
+        outputWindow.appendLine(outputWindowError, async (resultLocation, afterResultLocation) => {
           if (selection) {
             const editorError = util.stripAnsi(err.length ? err.join('\n') : e);
             const currentCursorPos = editor.selection.active;
-            if (options.comment) {
+            if (editor && options.comment) {
               await addAsComment(
                 selection.start.character,
                 editorError,
@@ -178,7 +190,7 @@ async function evaluateCode(
                 editor.selection
               );
             }
-            if (!outputWindow.isResultsDoc(editor.document)) {
+            if (editor && !outputWindow.isResultsDoc(editor.document)) {
               annotations.decorateSelection(
                 editorError,
                 selection,
@@ -192,13 +204,18 @@ async function evaluateCode(
               }
             }
           }
-          if (context.stacktrace && context.stacktrace.stacktrace) {
-            outputWindow.markLastStacktraceRange(afterResultLocation);
-          }
+          session
+            .stacktrace()
+            .then((stacktrace) => {
+              if (stacktrace && stacktrace.stacktrace) {
+                outputWindow.markLastStacktraceRange(afterResultLocation);
+                outputWindow.saveStacktrace(stacktrace.stacktrace);
+              }
+            })
+            .catch((e) => {
+              console.error(`Failed fetching stacktrace: ${e.message}`);
+            });
         });
-        if (context.stacktrace && context.stacktrace.stacktrace) {
-          outputWindow.saveStacktrace(context.stacktrace.stacktrace);
-        }
       }
     }
     outputWindow.setSession(session, context.ns || ns);
@@ -209,6 +226,8 @@ async function evaluateCode(
 }
 
 async function evaluateSelection(document = {}, options) {
+  void state.analytics().logGA4Pageview('/evaluated-form');
+
   const selectionFn: (editor: vscode.TextEditor) => [vscode.Selection, string] =
     options.selectionFn;
 
@@ -218,10 +237,11 @@ async function evaluateSelection(document = {}, options) {
     const selection = selectionFn(editor);
     const codeSelection: vscode.Selection = selection[0];
     let code = selection[1];
-    [codeSelection, code];
+    [codeSelection, code]; //TODO: What's this doing here?
 
     const doc = util.getDocument(document);
-    const ns = namespace.getNamespace(doc);
+    void vscode.window.showTextDocument(doc, { preview: false });
+    const [ns, nsForm] = namespace.getNamespace(doc, codeSelection.end);
     const line = codeSelection.start.line;
     const column = codeSelection.start.character;
     const filePath = doc.fileName;
@@ -239,7 +259,17 @@ async function evaluateSelection(document = {}, options) {
         undefined,
         annotations.AnnotationStatus.PENDING
       );
-      await evaluateCode(code, { ...options, ns, line, column, filePath, session }, codeSelection);
+      if (
+        state.extensionContext.workspaceState.get('outputWindowActive') &&
+        !(await outputWindow.lastLineIsEmpty())
+      ) {
+        outputWindow.appendLine();
+      }
+      await evaluateCodeUpdatingUI(
+        code,
+        { ...options, ns, nsForm, line, column, filePath, session },
+        codeSelection
+      );
       outputWindow.appendPrompt();
     }
   } else {
@@ -249,17 +279,6 @@ async function evaluateSelection(document = {}, options) {
 
 function printWarningForError(e: any) {
   console.warn(`Unhandled error: ${e.message}`);
-}
-
-function normalizeNewLines(str: string, asLineComment = false): string {
-  const s = str.replace(/\n\r?$/, '');
-  return asLineComment ? s.replace(/\n\r?/, '\n; ') : s;
-}
-
-function normalizeNewLinesAndJoin(strings: string[], asLineComment = false): string {
-  return strings
-    .map((s) => normalizeNewLines(s, asLineComment), asLineComment)
-    .join(`\n${asLineComment ? '; ' : ''}`);
 }
 
 function _currentSelectionElseCurrentForm(editor: vscode.TextEditor): getText.SelectionAndText {
@@ -279,78 +298,121 @@ function _currentEnclosingFormText(editor: vscode.TextEditor): getText.Selection
 }
 
 function evaluateSelectionReplace(document = {}, options = {}) {
-  evaluateSelection(
-    document,
-    Object.assign({}, options, {
-      replace: true,
-      pprintOptions: getConfig().prettyPrintingOptions,
-      selectionFn: _currentSelectionElseCurrentForm,
-    })
-  ).catch(printWarningForError);
+  if (util.getConnectedState()) {
+    evaluateSelection(
+      document,
+      Object.assign({}, options, {
+        replace: true,
+        pprintOptions: getConfig().prettyPrintingOptions,
+        selectionFn: _currentSelectionElseCurrentForm,
+      })
+    ).catch(printWarningForError);
+  } else {
+    offerToConnect();
+  }
 }
 
 function evaluateSelectionAsComment(document = {}, options = {}) {
-  evaluateSelection(
-    document,
-    Object.assign({}, options, {
-      comment: true,
-      pprintOptions: getConfig().prettyPrintingOptions,
-      selectionFn: _currentSelectionElseCurrentForm,
-    })
-  ).catch(printWarningForError);
+  if (util.getConnectedState()) {
+    evaluateSelection(
+      document,
+      Object.assign({}, options, {
+        comment: true,
+        pprintOptions: getConfig().prettyPrintingOptions,
+        selectionFn: _currentSelectionElseCurrentForm,
+      })
+    ).catch(printWarningForError);
+  } else {
+    offerToConnect();
+  }
 }
 
 function evaluateTopLevelFormAsComment(document = {}, options = {}) {
-  evaluateSelection(
-    document,
-    Object.assign({}, options, {
-      comment: true,
-      pprintOptions: getConfig().prettyPrintingOptions,
-      selectionFn: _currentTopLevelFormText,
-    })
-  ).catch(printWarningForError);
+  if (util.getConnectedState()) {
+    evaluateSelection(
+      document,
+      Object.assign({}, options, {
+        comment: true,
+        pprintOptions: getConfig().prettyPrintingOptions,
+        selectionFn: _currentTopLevelFormText,
+      })
+    ).catch(printWarningForError);
+  } else {
+    offerToConnect();
+  }
+}
+
+function offerToConnect() {
+  vscode.window
+    .showInformationMessage('The editor is not connected to a REPL server', 'Connect')
+    .then(
+      (choice) => {
+        if (choice === 'Connect') {
+          void vscode.commands.executeCommand('calva.startOrConnectRepl');
+        }
+      },
+      (reason) => {
+        console.log('Rejected because: ', reason);
+      }
+    );
 }
 
 function evaluateTopLevelForm(document = {}, options = {}) {
-  evaluateSelection(
-    document,
-    Object.assign({}, options, {
-      pprintOptions: getConfig().prettyPrintingOptions,
-      selectionFn: _currentTopLevelFormText,
-    })
-  ).catch(printWarningForError);
+  if (util.getConnectedState()) {
+    evaluateSelection(
+      document,
+      Object.assign({}, options, {
+        pprintOptions: getConfig().prettyPrintingOptions,
+        selectionFn: _currentTopLevelFormText,
+      })
+    ).catch(printWarningForError);
+  } else {
+    offerToConnect();
+  }
 }
 
 function evaluateOutputWindowForm(document = {}, options = {}) {
-  evaluateSelection(
-    document,
-    Object.assign({}, options, {
-      pprintOptions: getConfig().prettyPrintingOptions,
-      selectionFn: _currentTopLevelFormText,
-      evaluationSendCodeToOutputWindow: false,
-      addToHistory: true,
-    })
-  ).catch(printWarningForError);
+  if (util.getConnectedState()) {
+    evaluateSelection(
+      document,
+      Object.assign({}, options, {
+        pprintOptions: getConfig().prettyPrintingOptions,
+        selectionFn: _currentTopLevelFormText,
+        evaluationSendCodeToOutputWindow: false,
+        addToHistory: true,
+      })
+    ).catch(printWarningForError);
+  } else {
+    offerToConnect();
+  }
 }
 
 function evaluateCurrentForm(document = {}, options = {}) {
-  evaluateSelection(
-    document,
-    Object.assign({}, options, {
-      pprintOptions: getConfig().prettyPrintingOptions,
-      selectionFn: _currentSelectionElseCurrentForm,
-    })
-  ).catch(printWarningForError);
+  if (util.getConnectedState()) {
+    evaluateSelection(
+      document,
+      Object.assign({}, options, {
+        pprintOptions: getConfig().prettyPrintingOptions,
+        selectionFn: _currentSelectionElseCurrentForm,
+      })
+    ).catch(printWarningForError);
+  } else {
+    offerToConnect();
+  }
 }
 
 function evaluateEnclosingForm(document = {}, options = {}) {
-  evaluateSelection(
-    document,
-    Object.assign({}, options, {
-      pprintOptions: getConfig().prettyPrintingOptions,
-      selectionFn: _currentEnclosingFormText,
-    })
-  ).catch(printWarningForError);
+  if (util.getConnectedState()) {
+    evaluateSelection(
+      document,
+      Object.assign({}, options, {
+        pprintOptions: getConfig().prettyPrintingOptions,
+        selectionFn: _currentEnclosingFormText,
+      })
+    ).catch(printWarningForError);
+  } else {
+    offerToConnect();
+  }
 }
 
 function evaluateUsingTextAndSelectionGetter(
@@ -372,39 +434,56 @@ function evaluateUsingTextAndSelectionGetter(
 }
 
 function evaluateToCursor(document = {}, options = {}) {
-  evaluateUsingTextAndSelectionGetter(
-    getText.currentEnclosingFormToCursor,
-    (code) => `${code}`,
-    document,
-    options
-  );
+  if (util.getConnectedState()) {
+    evaluateUsingTextAndSelectionGetter(
+      vscode.window.activeTextEditor.selection.isEmpty
+        ? getText.currentEnclosingFormToCursor
+        : getText.selectionAddingBrackets,
+      (code) => `${code}`,
+      document,
+      options
+    );
+  } else {
+    offerToConnect();
+  }
 }
 
 function evaluateTopLevelFormToCursor(document = {}, options = {}) {
-  evaluateUsingTextAndSelectionGetter(
-    getText.currentTopLevelFormToCursor,
-    (code) => `${code}`,
-    document,
-    options
-  );
+  if (util.getConnectedState()) {
+    evaluateUsingTextAndSelectionGetter(
+      getText.currentTopLevelFormToCursor,
+      (code) => `${code}`,
+      document,
+      options
+    );
+  } else {
+    offerToConnect();
+  }
 }
 
 function evaluateStartOfFileToCursor(document = {}, options = {}) {
-  evaluateUsingTextAndSelectionGetter(
-    getText.startOFileToCursor,
-    (code) => `${code}`,
-    document,
-    options
-  );
+  if (util.getConnectedState()) {
+    evaluateUsingTextAndSelectionGetter(
+      getText.startOFileToCursor,
+      (code) => `${code}`,
+      document,
+      options
+    );
+  } else {
+    offerToConnect();
+  }
 }
 
-async function loadFile(
+async function loadDocument(
   document: vscode.TextDocument | Record<string, never> | undefined,
   pprintOptions: PrettyPrintingOptions
 ) {
+  void state.analytics().logGA4Pageview('/load-file');
+
   const doc = util.tryToGetDocument(document);
+  void vscode.window.showTextDocument(doc, { preview: false });
   const fileType = util.getFileType(doc);
-  const ns = namespace.getNamespace(doc);
+  const [ns, _] = namespace.getNamespace(doc, doc.positionAt(0));
   const session = replSession.getSession(util.getFileType(doc));
 
   if (doc && doc.languageId == 'clojure' && fileType != 'edn' && getStateValue('connected')) {
@@ -412,36 +491,91 @@ async function loadFile(
     const docUri = outputWindow.isResultsDoc(doc)
       ? await namespace.getUriForNamespace(session, ns)
       : doc.uri;
-    const fileName = path.basename(docUri.path);
-    const fileContents = await util.getFileContents(docUri.path);
+    const filePath = docUri.path;
+    return await loadFile(filePath, ns, pprintOptions, fileType);
+  }
+}
 
-    outputWindow.append('; Evaluating file: ' + fileName);
-
-    await session.switchNS(ns);
-
-    const res = session.loadFile(fileContents, {
-      fileName,
-      filePath: docUri.path,
-      stdout: (m) => outputWindow.append(normalizeNewLines(m)),
-      stderr: (m) => outputWindow.append('; ' + normalizeNewLines(m, true)),
-      pprintOptions: pprintOptions,
+async function loadFileCommand() {
+  if (util.getConnectedState()) {
+    await loadDocument({}, getConfig().prettyPrintingOptions);
+    return new Promise((resolve) => {
+      outputWindow.appendPrompt(resolve);
     });
-    try {
-      const value = await res.value;
-      if (value) {
-        outputWindow.append(value);
-      } else {
-        outputWindow.append('; No results from file evaluation.');
-      }
-    } catch (e) {
-      outputWindow.append(`; Evaluation of file ${fileName} failed: ${e}`);
-      if (res.stacktrace) {
-        outputWindow.saveStacktrace(res.stacktrace.stacktrace);
-        outputWindow.printLastStacktrace();
-      }
+  } else {
+    offerToConnect();
+  }
+}
+
+async function loadFile(
+  filePath: string,
+  ns: string,
+  pprintOptions: PrettyPrintingOptions,
+  fileType: string
+) {
+  const fileName = path.basename(filePath);
+  const fileContents = await util.getFileContents(filePath);
+  const session = replSession.getSession(path.extname(fileName).replace(/^\./, ''));
+
+  outputWindow.appendLine(`; Evaluating file: ${fileName}`);
+
+  const errorMessages = [];
+  const res = session.loadFile(fileContents, {
+    fileName,
+    filePath,
+    stdout: (m) => outputWindow.append(m),
+    stderr: (m) => {
+      outputWindow.appendLine(formatAsLineComments(m));
+      errorMessages.push(m);
+    },
+    pprintOptions: pprintOptions,
+  });
+  try {
+    const value = await res.value;
+    if (value) {
+      outputWindow.appendLine(value);
+    } else {
+      outputWindow.appendLine('; No results from file evaluation.');
     }
-    outputWindow.setSession(session, res.ns || ns);
+  } catch (e) {
+    outputWindow.appendLine(
+      `; Evaluation of file ${fileName} failed: ${e}`,
+      (_location, nextLocation) => {
+        if (res.stacktrace) {
+          outputWindow.saveStacktrace(res.stacktrace.stacktrace);
+          outputWindow.markLastStacktraceRange(nextLocation);
+        }
+      }
+    );
+    if (
+      !vscode.window.visibleTextEditors.find((editor: vscode.TextEditor) =>
+        outputWindow.isResultsDoc(editor.document)
+      )
+    ) {
+      void vscode.window
+        .showErrorMessage(
+          `Evaluation of file ${fileName} failed: ${errorMessages.join(' ')} - ${e}`,
+          'Show output'
+        )
+        .then((choice) => {
+          if (choice === 'Show output') {
+            void vscode.commands.executeCommand('calva.showOutputWindow');
+          }
+        });
+    }
+  } finally {
+    outputWindow.setSession(session, ns);
     replSession.updateReplSessionType();
+    if (getConfig().autoEvaluateCode.onFileLoaded[fileType]) {
+      outputWindow.appendLine(`; Evaluating 'autoEvaluateCode.onFileLoaded.${fileType}'`);
+      const context = customSnippets.makeContext(vscode.window.activeTextEditor, ns, ns, fileType);
+      await customSnippets.evaluateSnippet(
+        util.getActiveTextEditor(),
+        getConfig().autoEvaluateCode.onFileLoaded[fileType],
+        context,
+        {}
+      );
+    }
   }
 }
 
@@ -463,19 +597,14 @@ async function evaluateUser(code: string) {
 async function requireREPLUtilitiesCommand() {
   if (util.getConnectedState()) {
     const chan = state.outputChannel(),
-      ns = namespace.getDocumentNamespace(util.tryToGetDocument({})),
-      CLJS_FORM = "(use '[cljs.repl :only [apropos dir doc find-doc print-doc pst source]])",
-      CLJ_FORM = '(clojure.core/apply clojure.core/require clojure.main/repl-requires)',
-      sessionType = replSession.getReplSessionTypeFromState(),
-      form = sessionType == 'cljs' ? CLJS_FORM : CLJ_FORM,
+      [ns, _nsForm] = namespace.getDocumentNamespace(util.tryToGetDocument({})),
       fileType = util.getFileType(util.tryToGetDocument({})),
       session = replSession.getSession(fileType);
 
     if (session) {
       try {
         await namespace.createNamespaceFromDocumentIfNotExists(util.tryToGetDocument({}));
-        await session.switchNS(ns);
-        await session.eval(form, ns).value;
+        await session.requireREPLUtilities(ns);
         chan.appendLine(`REPL utilities are now available in namespace ${ns}.`);
       } catch (e) {
         chan.appendLine(`REPL utilities could not be acquired for namespace ${ns}: ${e}`);
@@ -522,62 +651,55 @@ async function toggleEvaluationSendCodeToOutputWindow() {
 }
 
 function instrumentTopLevelForm() {
-  evaluateSelection(
-    {},
-    {
-      pprintOptions: getConfig().prettyPrintingOptions,
-      debug: true,
-      selectionFn: _currentTopLevelFormText,
-    }
-  ).catch(printWarningForError);
-  state
-    .analytics()
-    .logEvent(DEBUG_ANALYTICS.CATEGORY, DEBUG_ANALYTICS.EVENT_ACTIONS.INSTRUMENT_FORM)
-    .send();
+  if (util.getConnectedState()) {
+    evaluateSelection(
+      {},
+      {
+        pprintOptions: getConfig().prettyPrintingOptions,
+        debug: true,
+        selectionFn: _currentTopLevelFormText,
+      }
+    ).catch(printWarningForError);
+    state
+      .analytics()
+      .logEvent(DEBUG_ANALYTICS.CATEGORY, DEBUG_ANALYTICS.EVENT_ACTIONS.INSTRUMENT_FORM)
+      .send();
+  } else {
+    offerToConnect();
+  }
 }
 
-export async function evaluateInOutputWindow(
-  code: string,
-  sessionType: string,
-  ns: string,
-  options
-) {
+async function evaluateInOutputWindow(code: string, sessionType: string, ns: string, options) {
   const outputDocument = await outputWindow.openResultsDoc();
   const evalPos = outputDocument.positionAt(outputDocument.getText().length);
   try {
     const session = replSession.getSession(sessionType);
     replSession.updateReplSessionType();
     if (outputWindow.getNs() !== ns) {
-      await session.switchNS(ns);
       outputWindow.setSession(session, ns);
       if (options.evaluationSendCodeToOutputWindow !== false) {
         outputWindow.appendPrompt();
       }
     }
 
-    return await evaluateCode(code, {
+    return await evaluateCodeUpdatingUI(code, {
       ...options,
       filePath: outputDocument.fileName,
       session,
       ns,
+      nsForm: options.nsForm ?? `(in-ns '${ns})`,
       line: evalPos.line,
       column: evalPos.character,
     });
   } catch (e) {
-    outputWindow.append('; Evaluation failed.');
+    outputWindow.appendLine('; Evaluation failed.');
   }
 }
 
-export type customREPLCommandSnippet = {
-  name: string;
-  key?: string;
-  snippet: string;
-  repl?: string;
-  ns?: string;
-};
-
 export default {
   interruptAllEvaluations,
+  loadDocument,
+  loadFileCommand,
   loadFile,
   evaluateCurrentForm,
   evaluateEnclosingForm,
@@ -588,7 +710,6 @@ export default {
   evaluateToCursor,
   evaluateTopLevelFormToCursor,
   evaluateStartOfFileToCursor,
-  evaluateCode,
   evaluateUser,
   copyLastResultCommand,
   requireREPLUtilitiesCommand,

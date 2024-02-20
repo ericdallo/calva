@@ -71,9 +71,13 @@ toplevel.terminal(
 // (#[^\(\)\[\]\{\}"_@~\s,]+[\s,]*)*
 
 // open parens
-toplevel.terminal('open', /((?<=(^|[()[\]{}\s,]))['`~#@?^]\s*)*['`~#@?^]*[([{"]/, (l, m) => ({
-  type: 'open',
-}));
+toplevel.terminal(
+  'open',
+  /((?<=(^|[()[\]{}\s,]))['`~@?^]\s*)*(['`~#@?^]*[({"]|['`~@?^]*[[])/,
+  (l, m) => ({
+    type: 'open',
+  })
+);
 
 // close parens
 toplevel.terminal('close', /\)|\]|\}/, (l, m) => ({ type: 'close' }));
@@ -168,7 +172,7 @@ export interface ScannerState {
 export class Scanner {
   state: ScannerState = { inString: false };
 
-  constructor(private maxLength: number) {}
+  constructor(public maxLength: number) {}
 
   processLine(line: string, state: ScannerState = this.state) {
     const tks: Token[] = [];

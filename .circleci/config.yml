@@ -16,7 +16,7 @@ jobs:
           name: Install node_modules
           command: cp package.json /tmp && npm install && cp /tmp/package.json .
       - run:
-          name: "Create build workspace"
+          name: Create build workspace
           command: mkdir /tmp/build
       - run:
           name: Copy build
@@ -33,7 +33,7 @@ jobs:
             - build
   build:
     docker:
-      - image: cimg/openjdk:17.0.1-node
+      - image: cimg/clojure:1.11-node
     working_directory: ~/calva
     steps:
       - attach_workspace:
@@ -45,7 +45,7 @@ jobs:
           name: Install CLJS dependencies
           command: npx shadow-cljs classpath
       - run:
-          name: "Create artifacts workspace"
+          name: Create artifacts workspace
           command: mkdir /tmp/artifacts
       - run:
           name: Tamper Calva version if not release versioned
@@ -117,13 +117,9 @@ jobs:
     working_directory: ~/calva
     environment:
       # Required:
-      DISPLAY: ":99"
-      # Configurable
-      ATOM_LINT_WITH_BUNDLED_NODE: "true"
-      APM_TEST_PACKAGES: ""
-      ATOM_CHANNEL: "stable"
+      DISPLAY: ':99'
     docker:
-      - image: circleci/node:latest
+      - image: arcanemagus/atom-docker-ci
     steps:
       - attach_workspace:
           at: /tmp
@@ -131,30 +127,14 @@ jobs:
           name: Restore build
           command: rmdir ~/calva && cp -r /tmp/build ~/calva
       - run:
-          name: Update system package lists
-          command: sudo apt-get update
-      - run:
-          name: Install some pre-requisite packages
-          command: sudo apt-get --assume-yes --quiet install curl xvfb libasound2 libgbm-dev
-      - run:
           name: Start display server for Atom
           command: /sbin/start-stop-daemon --start --quiet --pidfile /tmp/custom_xvfb_99.pid --make-pidfile --background --exec /usr/bin/Xvfb -- :99 -ac -screen 0 1024x768x16 +extension RANDR
           background: true
       - run:
-          name: Download Atom build script
-          command: |
-            cd src/calva-fmt/atom-language-clojure
-            curl -s -OL https://raw.githubusercontent.com/atom/ci/master/build-package.sh
-      - run:
-          name: Make build script executable
-          command: |
-            cd src/calva-fmt/atom-language-clojure
-            chmod u+x build-package.sh
-      - run:
           name: Run package tests
           command: |
             cd src/calva-fmt/atom-language-clojure
-            ./build-package.sh
+            ./run-grammar-tests.sh
       - save_cache:
           name: Save dependencies
           key: ts-{{ checksum "package.json" }}-cljs-{{ checksum "shadow-cljs.edn" }}-grammar-{{ checksum "src/calva-fmt/atom-language-clojure/package.json" }}
@@ -219,7 +199,7 @@ jobs:
           path: ~/calva/junit
   test-integration:
     docker:
-      - image: circleci/clojure:openjdk-11-tools-deps-bullseye-node-browsers-legacy
+      - image: cimg/clojure:1.11-browsers
     working_directory: ~/calva
     steps:
       - attach_workspace:
@@ -231,8 +211,61 @@ jobs:
           name: Compile Extension Tests
           command: npm run compile-test
       - run:
+          name: Apt install missing dependencies
+          command: |
+            sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E88979FB9B30ACF2
+            sudo apt update && sudo apt install -y libnss3
+      - run:
           name: Run Extension Tests
           command: npm run integration-test
+      - store_test_results:
+          path: ~/calva/junit
+  test-e2e:
+    docker:
+      - image: cimg/clojure:1.11-browsers
+    working_directory: ~/calva
+    steps:
+      - attach_workspace:
+          at: /tmp
+      - run:
+          name: Restore build
+          command: rmdir ~/calva && cp -r /tmp/build ~/calva
+      - run:
+          name: Apt install missing dependencies
+          command: |
+            sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E88979FB9B30ACF2
+            sudo apt update && sudo apt install -y libnss3
+      - run:
+          name: Run VSIX E2E Tests
+          command: npm run e2e-test -- --calva-vsix=/tmp/artifacts/calva-$(node -p 'require("./package.json").version').vsix --test-workspace=src/extension-test/e2e-test
+      - run:
+          name: Temporary debug preserving of VS Code network log
+          command: for f in /home/circleci/.config/'Code - Insiders'/logs/*/network.log ; do echo "$f"; echo ---; cat "$f"; echo --- ; done
+          when: always
+      - store_test_results:
+          path: ~/calva/junit
+  test-e2e-sub-projects:
+    docker:
+      - image: cimg/clojure:1.11-browsers
+    working_directory: ~/calva
+    steps:
+      - attach_workspace:
+          at: /tmp
+      - run:
+          name: Restore build
+          command: rmdir ~/calva && cp -r /tmp/build ~/calva
+      - run:
+          name: Apt install missing dependencies
+          command: |
+            sudo apt-key adv --keyserver keyserver.ubuntu.com --recv-keys E88979FB9B30ACF2
+            sudo apt update && sudo apt install -y libnss3
+      - run:
+          name: Run VSIX E2E Tests for test-data/projects/e2e-sub-projects
+          command: npm run e2e-test -- --calva-vsix=/tmp/artifacts/calva-$(node -p 'require("./package.json").version').vsix --test-workspace=test-data/projects/e2e-sub-projects
+      - run:
+          name: Temporary debug preserving of VS Code network log
+          command: for f in /home/circleci/.config/'Code - Insiders'/logs/*/network.log ; do echo "$f"; echo ---; cat "$f"; echo --- ; done
+          when: always
       - store_test_results:
           path: ~/calva/junit
   github-release:
@@ -246,7 +279,7 @@ jobs:
           name: Restore build
           command: rmdir ~/calva && cp -r /tmp/build ~/calva
       - run:
-          name: "Publish Release on GitHub"
+          name: 'Publish Release on GitHub'
           command: |
             EXTRA_RELEASE_OPTIONS=""
             if [[ "${CIRCLE_TAG}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]
@@ -258,7 +291,7 @@ jobs:
             fi
             [[ "${CIRCLE_TAG}" =~ ^v([0-9]+\.[0-9]+\.[0-9]+) ]]
             TAG_VERSION=${BASH_REMATCH[1]}
-            BODY=$(awk '/^## \['${TAG_VERSION}'\]/, /^ *$/ { gsub(/["$]/, "\\\\&"); print }' CHANGELOG.md | tail -n +2)
+            BODY=$(awk '/^## \['${TAG_VERSION}'\]/, started && /^##/ { started=1; if ($0 !~ /(^#|^\s*$)/) { gsub(/["$]/, "\\\\&"); print } }' CHANGELOG.md)
             echo Changes: "\n" $BODY
             if [ "${IS_LOCAL}" = YES ]
             then
@@ -327,13 +360,13 @@ jobs:
             else
               npx ${OVSX_CMD}
             fi
-  merge-dev-to-published:
+  merge-dev-into-published:
     docker:
       - image: cimg/node:15.8
     steps:
       - add_ssh_keys:
           fingerprints:
-            - "d1:06:ff:c3:58:59:68:6e:a3:2f:69:1d:e2:94:7c:14"
+            - 'd1:06:ff:c3:58:59:68:6e:a3:2f:69:1d:e2:94:7c:14'
       - checkout
       - run:
           name: Merge dev into published
@@ -341,40 +374,59 @@ jobs:
             git config --global user.email $GITHUB_USER_EMAIL
             git config --global user.name $GITHUB_USER_NAME
             git checkout published
-            git merge origin/dev -m "Merge branch dev into published"
+            git pull
+            git merge origin/dev --no-ff -m "Merge branch dev into published"
+            git push origin HEAD
+  merge-published-into-dev:
+    docker:
+      - image: cimg/node:15.8
+    steps:
+      - add_ssh_keys:
+          fingerprints:
+            - 'd1:06:ff:c3:58:59:68:6e:a3:2f:69:1d:e2:94:7c:14'
+      - checkout
+      - run:
+          name: Merge published into dev
+          command: |
+            git config --global user.email $GITHUB_USER_EMAIL
+            git config --global user.name $GITHUB_USER_NAME
+            git checkout dev
+            git pull
+            git merge origin/published --no-ff -m "Merge branch published into dev [skip ci]"
             git push origin HEAD
   deploy-docs:
     docker:
       - image: cimg/python:3.8-node
+    environment:
+      MKDOCS_ENV: production
     steps:
       - add_ssh_keys:
           fingerprints:
-            - "d1:06:ff:c3:58:59:68:6e:a3:2f:69:1d:e2:94:7c:14"
+            - 'd1:06:ff:c3:58:59:68:6e:a3:2f:69:1d:e2:94:7c:14'
       - checkout
       - run:
           name: Update system package lists
           command: sudo apt-get update
       - run:
-          name: Install mkdocs-materials insiders dependencies
+          name: Install mkdocs-materials dependencies
           command: |
             sudo apt-get install libcairo2-dev libfreetype6-dev libffi-dev libjpeg-dev libpng-dev libz-dev
       - run:
-          name: Install mkdocs and mkdocs-material
+          name: Install mkdocs and mkdocs-materials
           command: |
-            pip install mkdocs
-            pip install git+https://${GITHUB_MKDOCS_MATERIAL_TOKEN}@github.com/squidfunk/mkdocs-material-insiders.git
+            pip install -r requirements.txt
       - run:
           name: Deploy docs
           command: |
             git checkout published
-            mkdocs gh-deploy --config-file mkdocs.insiders.yml --message "[skip ci]" --strict --clean
+            mkdocs gh-deploy --config-file mkdocs.yml --message "[skip ci]" --strict --clean
   bump-dev-version:
     docker:
       - image: cimg/node:15.8
     steps:
       - add_ssh_keys:
           fingerprints:
-            - "d1:06:ff:c3:58:59:68:6e:a3:2f:69:1d:e2:94:7c:14"
+            - 'd1:06:ff:c3:58:59:68:6e:a3:2f:69:1d:e2:94:7c:14'
       - checkout
       - run:
           name: Bump dev version
@@ -383,6 +435,7 @@ jobs:
             git config --global user.name $GITHUB_USER_NAME
             git checkout dev
             npm run bump-version
+            git pull
             git add .
             git commit -m "Bring on version $(node -p "require('./package').version")!"
             git push origin HEAD
@@ -391,6 +444,11 @@ workflows:
   calva-io-build:
     jobs:
       - deploy-docs:
+          filters:
+            branches:
+              only: published
+          context: Calva
+      - merge-published-into-dev:
           filters:
             branches:
               only: published
@@ -405,19 +463,25 @@ workflows:
       - prettier-check:
           requires:
             - checkout
+      - test-grammar:
+          requires:
+            - checkout
       - build:
           requires:
             - checkout
       - eslint-check:
           requires:
             - build
-      - test-grammar:
-          requires:
-            - build
       - test-cljslib:
           requires:
             - build
       - test-integration:
+          requires:
+            - build
+      - test-e2e:
+          requires:
+            - build
+      - test-e2e-sub-projects:
           requires:
             - build
       - test-ts-unit:
@@ -430,6 +494,8 @@ workflows:
             - test-grammar
             - test-cljslib
             - test-integration
+            - test-e2e
+            - test-e2e-sub-projects
             - test-ts-unit
           filters:
             branches:
@@ -491,6 +557,22 @@ workflows:
               ignore: /.*/
             tags:
               only: /^v\d+\.\d+\.\d+-?.*/
+      - test-e2e:
+          requires:
+            - build
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v\d+\.\d+\.\d+-?.*/
+      - test-e2e-sub-projects:
+          requires:
+            - build
+          filters:
+            branches:
+              ignore: /.*/
+            tags:
+              only: /^v\d+\.\d+\.\d+-?.*/
       - test-ts-unit:
           requires:
             - build
@@ -506,6 +588,8 @@ workflows:
             - test-grammar
             - test-cljslib
             - test-integration
+            - test-e2e
+            - test-e2e-sub-projects
             - test-ts-unit
           filters:
             branches:
@@ -531,7 +615,7 @@ workflows:
             tags:
               only: /^v\d+\.\d+\.\d+$/
           context: Calva
-      - merge-dev-to-published:
+      - merge-dev-into-published:
           requires:
             - marketplace-publish
           filters:
@@ -542,7 +626,7 @@ workflows:
           context: Calva
       - bump-dev-version:
           requires:
-            - merge-dev-to-published
+            - merge-dev-into-published
           filters:
             branches:
               ignore: /.*/

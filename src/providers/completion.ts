@@ -3,23 +3,25 @@ import {
   Position,
   CancellationToken,
   CompletionContext,
-  Hover,
   CompletionItemKind,
   window,
   CompletionList,
   CompletionItemProvider,
   CompletionItem,
-  CompletionItemLabel,
+  Uri,
+  MarkdownString,
 } from 'vscode';
 import * as util from '../utilities';
-import select from '../select';
+import * as select from '../select';
 import * as docMirror from '../doc-mirror/index';
 import * as infoparser from './infoparser';
 import * as namespace from '../namespace';
 import * as replSession from '../nrepl/repl-session';
-import { getClient } from '../lsp/main';
 import { CompletionRequest, CompletionResolveRequest } from 'vscode-languageserver-protocol';
 import { createConverter } from 'vscode-languageclient/lib/common/protocolConverter';
+import ProtocolCompletionItem from 'vscode-languageclient/lib/common/protocolCompletionItem';
+import * as lsp from '../lsp';
+import { mergeCompletions } from './completion-util';
 
 const mappings = {
   nil: CompletionItemKind.Value,
@@ -30,16 +32,24 @@ const mappings = {
   function: CompletionItemKind.Function,
   'special-form': CompletionItemKind.Keyword,
   var: CompletionItemKind.Variable,
+  local: CompletionItemKind.Variable,
   method: CompletionItemKind.Method,
 };
 
-const converter = createConverter(undefined, undefined);
+const converter = createConverter(undefined, undefined, true);
 
 const completionProviderOptions = { priority: ['lsp', 'repl'], merge: true };
 
 const completionFunctions = { lsp: lspCompletions, repl: replCompletions };
 
+async function provideCompletions(provider: string) {
+  return await completionFunctions[provider]().catch((err) => {
+    console.log(`Failed to get results from completions provider '${provider}'`, err);
+  });
+}
+
 async function provideCompletionItems(
+  clientProvider: lsp.ClientProvider,
   document: TextDocument,
   position: Position,
   token: CancellationToken,
@@ -50,33 +60,38 @@ async function provideCompletionItems(
     if (results.length && !completionProviderOptions.merge) {
       break;
     }
-    const completions = await completionFunctions[provider](document, position, token, context);
 
+    const completions = await completionFunctions[provider](
+      clientProvider,
+      document,
+      position,
+      token,
+      context
+    ).catch((err) => {
+      console.log(`Failed to get results from completions provider '${provider}'`, err);
+    });
     if (completions) {
-      results = [
-        ...completions
-          .concat(results)
-          .reduce(
-            (m: Map<string | CompletionItemLabel, CompletionItem>, o: CompletionItem) =>
-              m.set(o.label, Object.assign(m.get(o.label) || {}, o)),
-            new Map()
-          )
-          .values(),
-      ];
+      results = mergeCompletions(results, completions);
     }
   }
 
-  return new CompletionList(results.map(converter.asCompletionItem), true);
+  const completionItems: ProtocolCompletionItem[] = results.map((completion) =>
+    converter.asCompletionItem(completion)
+  );
+
+  return new CompletionList(completionItems, true);
 }
 
 export default class CalvaCompletionItemProvider implements CompletionItemProvider {
+  constructor(private readonly clientProvider: lsp.ClientProvider) {}
+
   async provideCompletionItems(
     document: TextDocument,
     position: Position,
     token: CancellationToken,
     context: CompletionContext
   ) {
-    return provideCompletionItems(document, position, token, context);
+    return provideCompletionItems(this.clientProvider, document, position, token, context);
   }
 
   async resolveCompletionItem(item: CompletionItem, token: CancellationToken) {
@@ -88,49 +103,68 @@ export default class CalvaCompletionItemProvider implements CompletionItemProvid
       const client = replSession.getSession(util.getFileType(activeTextEditor.document));
       if (client) {
         await namespace.createNamespaceFromDocumentIfNotExists(activeTextEditor.document);
-        const ns = namespace.getDocumentNamespace();
+        const [ns, _] = namespace.getDocumentNamespace();
         const result = await client.info(
           ns,
           typeof item.label === 'string' ? item.label : item['data'].label
         );
         const [doc, details] = infoparser.getCompletion(result);
-        item.documentation = doc;
+        const docFromCider = item['data']?.['completion-doc'];
+
+        item.documentation =
+          doc || docFromCider ? new MarkdownString(docFromCider, true) : undefined;
         item.detail = details;
       }
 
       return item;
     } else {
-      const res = await lspResolveCompletions(item, token);
+      const res = await lspResolveCompletions(
+        this.clientProvider,
+        window.activeTextEditor.document.uri,
+        item,
+        token
+      );
 
       return converter.asCompletionItem(res);
     }
   }
 }
 
-async function lspCompletions(
+function lspCompletions(
+  clientProvider: lsp.ClientProvider,
   document: TextDocument,
   position: Position,
   token: CancellationToken,
   context: CompletionContext
 ) {
-  const lspClient = await getClient(20);
-  return lspClient.sendRequest(
-    CompletionRequest.type,
-    lspClient.code2ProtocolConverter.asCompletionParams(document, position, context),
-    token
-  );
+  const client = clientProvider.getClientForDocumentUri(document.uri);
+  if (client) {
+    return client.sendRequest(
+      CompletionRequest.type,
+      client.code2ProtocolConverter.asCompletionParams(document, position, context),
+      token
+    );
+  } else {
+    return Promise.resolve([]);
+  }
 }
 
-async function lspResolveCompletions(item: CompletionItem, token: CancellationToken) {
-  const lspClient = await getClient(20);
-  return lspClient.sendRequest(
+async function lspResolveCompletions(
+  clientProvider: lsp.ClientProvider,
+  uri: Uri,
+  item: CompletionItem,
+  token: CancellationToken
+) {
+  const client = clientProvider.getClientForDocumentUri(uri);
+  return await client?.sendRequest(
     CompletionResolveRequest.type,
-    lspClient.code2ProtocolConverter.asCompletionItem(item),
+    client.code2ProtocolConverter.asCompletionItem(item),
     token
   );
 }
 
 async function replCompletions(
+  clientProvider: lsp.ClientProvider,
   document: TextDocument,
   position: Position,
   _token: CancellationToken,
@@ -158,7 +192,7 @@ async function replCompletions(
     contextEnd = toplevel.substring(wordEndLocalOffset),
     replContext = `${contextStart}__prefix__${contextEnd}`,
     toplevelIsValidForm = toplevelStartCursor.withinValidList() && replContext != '__prefix__',
-    ns = namespace.getNamespace(document),
+    [ns, _] = namespace.getNamespace(document, position),
     client = replSession.getSession(util.getFileType(document)),
     res = await client.complete(ns, text, toplevelIsValidForm ? replContext : undefined),
     results = res.completions || [];
@@ -173,7 +207,9 @@ async function replCompletions(
   return results.map((item) => {
     const result = new CompletionItem(
       item.candidate,
-      mappings[item.type] || CompletionItemKind.Text
+      // +1 because the LSP CompletionItemKind enum starts at 1
+      // https://microsoft.github.io/language-server-protocol/specifications/lsp/3.17/specification/#completionItemKind
+      (mappings[item.type] || CompletionItemKind.Text) + 1
     );
     const data = item[0] === '.' ? item.slice(1) : item;
     data['provider'] = 'repl';

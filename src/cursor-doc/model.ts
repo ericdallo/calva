@@ -9,13 +9,22 @@ export function initScanner(maxLength: number) {
   scanner = new Scanner(maxLength);
 }
 
+/**
+ * @param text The text to look in for the end of line seq.
+ * @returns The first end of line sequence found in TEXT, if any.
+ */
+export function getFirstEol(text: string) {
+  return text.match(/\r\n|\n/g)?.[0];
+}
+
 export class TextLine {
   tokens: Token[] = [];
   text: string;
   endState: ScannerState;
+
   constructor(text: string, public startState: ScannerState) {
     this.text = text;
-    this.tokens = scanner.processLine(text);
+    this.tokens = scanner.processLine(text, startState);
     this.endState = { ...scanner.state };
   }
 
@@ -527,6 +536,9 @@ export class LineInputModel implements EditableModel {
 
 export class StringDocument implements EditableDocument {
   constructor(contents?: string) {
+    const eol = contents ? getFirstEol(contents) : null;
+
+    this.model = new LineInputModel(eol ? eol.length : 1, this);
     if (contents) {
       this.insertString(contents);
     }
@@ -534,7 +546,7 @@ export class StringDocument implements EditableDocument {
 
   selection: ModelEditSelection;
 
-  model: LineInputModel = new LineInputModel(1, this);
+  model: LineInputModel;
 
   selectionStack: ModelEditSelection[] = [];
 
@@ -548,6 +560,7 @@ export class StringDocument implements EditableDocument {
 
   insertString(text: string) {
     this.model.insertString(0, text);
+    initScanner(scanner.maxLength);
   }
 
   getSelectionText: () => string;

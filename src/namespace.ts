@@ -1,49 +1,32 @@
 import * as vscode from 'vscode';
 import * as _ from 'lodash';
 import * as docMirror from './doc-mirror/index';
-import { LispTokenCursor } from './cursor-doc/token-cursor';
-import { Token } from './cursor-doc/clojure-lexer';
 import * as outputWindow from './results-output/results-doc';
 import * as utilities from './utilities';
 import * as replSession from './nrepl/repl-session';
 import { NReplSession } from './nrepl';
+import * as nsUtil from './util/ns-form';
 
-export function getNamespace(doc?: vscode.TextDocument) {
+export type NsAndNsForm = [string, string];
+
+export function getNamespace(
+  doc: vscode.TextDocument,
+  position: vscode.Position = null
+): NsAndNsForm {
   if (outputWindow.isResultsDoc(doc)) {
     const outputWindowNs = outputWindow.getNs();
     utilities.assertIsDefined(outputWindowNs, 'Expected output window to have a namespace!');
-    return outputWindowNs;
+    return [outputWindowNs, `(in-ns '${outputWindowNs})`];
   }
-  let ns = 'user';
   if (doc && doc.languageId == 'clojure') {
     try {
-      const cursor: LispTokenCursor = docMirror.getDocument(doc).getTokenCursor(0);
-      cursor.forwardWhitespace(true);
-      let token: Token | undefined = undefined,
-        foundNsToken: boolean = false,
-        foundNsId: boolean = false;
-      do {
-        cursor.downList();
-        if (token && token.offset == cursor.getToken().offset) {
-          cursor.next();
-        }
-        token = cursor.getToken();
-        foundNsToken = token.type == 'id' && token.raw == 'ns';
-      } while (!foundNsToken && !cursor.atEnd());
-      if (foundNsToken) {
-        do {
-          cursor.next();
-          token = cursor.getToken();
-          foundNsId = token.type == 'id';
-        } while (!foundNsId && !cursor.atEnd());
-        if (foundNsId) {
-          ns = token.raw;
-        } else {
-          console.log('Error getting the ns name from the ns form.');
-        }
-      } else {
-        console.log('No ns form found.');
-      }
+      const cursorDoc = docMirror.getDocument(doc);
+      return (
+        nsUtil.nsFromCursorDoc(
+          cursorDoc,
+          position ? doc.offsetAt(position) : doc.getText().length
+        ) ?? ['user', "(in-ns 'user)"]
+      );
     } catch (e) {
       console.log(
         'Error getting ns form of this file using docMirror, trying with cljs.reader: ' + e
@@ -55,7 +38,7 @@ export function getNamespace(doc?: vscode.TextDocument) {
           if (nsFormArray != undefined && nsFormArray.length > 0) {
             const nsForm = nsFormArray[0].filter((x) => typeof x == 'string');
             if (nsForm != undefined) {
-              ns = nsForm[1];
+              return [nsForm[1], `(in-ns '${nsForm[1]})`];
             }
           }
         }
@@ -64,21 +47,21 @@ export function getNamespace(doc?: vscode.TextDocument) {
       }
     }
   }
-  return ns;
+  return ['user', "(in-ns 'user)"];
 }
 
 export async function createNamespaceFromDocumentIfNotExists(doc) {
   if (utilities.getConnectedState()) {
     const document = utilities.tryToGetDocument(doc);
     if (document) {
-      const ns = getNamespace(document);
+      const [ns, nsForm] = getNamespace(document);
       const client = replSession.getSession(utilities.getFileType(document));
       if (client) {
         const nsList = await client.listNamespaces([]);
-        if (nsList['ns-list'] && nsList['ns-list'].includes(ns)) {
+        if (nsList && nsList['ns-list'] && nsList['ns-list'].includes(ns)) {
           return;
         }
-        await client.eval('(ns ' + ns + ')', client.client.ns).value;
+        await client.evaluateInNs(nsForm, outputWindow.getNs());
       }
     }
   }

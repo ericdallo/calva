@@ -1,22 +1,19 @@
 import * as vscode from 'vscode';
-import * as config from './config';
+import * as config from '../../formatter-config';
 import * as outputWindow from '../../results-output/results-doc';
-import {
-  getIndent,
-  getDocumentOffset,
-  MirroredDocument,
-  getDocument,
-} from '../../doc-mirror/index';
-import {
-  formatTextAtRange,
-  formatTextAtIdx,
-  formatTextAtIdxOnType,
-  formatText,
-  cljify,
-  jsify,
-} from '../../../out/cljs-lib/cljs-lib';
+import { getIndent, getDocumentOffset, getDocument } from '../../doc-mirror/index';
+import { formatTextAtRange, formatText, jsify } from '../../../out/cljs-lib/cljs-lib';
 import * as util from '../../utilities';
+import * as cursorDocUtils from '../../cursor-doc/utilities';
 import { isUndefined, cloneDeep } from 'lodash';
+import { LispTokenCursor } from '../../cursor-doc/token-cursor';
+import { formatIndex } from './format-index';
+import * as state from '../../state';
+
+const FormatDepthDefaults = {
+  deftype: 2,
+  defprotocol: 2,
+};
 
 export async function indentPosition(position: vscode.Position, document: vscode.TextDocument) {
   const editor = util.getActiveTextEditor();
@@ -24,49 +21,66 @@ export async function indentPosition(position: vscode.Position, document: vscode
   const indent = getIndent(
     getDocument(document).model.lineInputModel,
     getDocumentOffset(document, position),
-    await config.getConfig()
+    await config.getConfig(document)
   );
-  let delta = document.lineAt(position.line).firstNonWhitespaceCharacterIndex - indent;
+  const newPosition = new vscode.Position(position.line, indent);
+  const delta = document.lineAt(position.line).firstNonWhitespaceCharacterIndex - indent;
   if (delta > 0) {
-    return editor.edit(
-      (edits) => edits.delete(new vscode.Range(pos, new vscode.Position(pos.line, delta))),
-      {
+    return editor
+      .edit((edits) => edits.delete(new vscode.Range(pos, new vscode.Position(pos.line, delta))), {
         undoStopAfter: false,
         undoStopBefore: false,
-      }
-    );
+      })
+      .then((onFulfilled) => {
+        editor.selection = new vscode.Selection(newPosition, newPosition);
+        return onFulfilled;
+      });
   } else if (delta < 0) {
-    let str = '';
-    while (delta++ < 0) {
-      str += ' ';
-    }
-    return editor.edit((edits) => edits.insert(pos, str), {
-      undoStopAfter: false,
-      undoStopBefore: false,
-    });
+    const str = ' '.repeat(-delta);
+    return editor
+      .edit((edits) => edits.insert(pos, str), {
+        undoStopAfter: false,
+        undoStopBefore: false,
+      })
+      .then((onFulfilled) => {
+        editor.selection = new vscode.Selection(newPosition, newPosition);
+        return onFulfilled;
+      });
   }
 }
 
 export async function formatRangeEdits(
   document: vscode.TextDocument,
-  range: vscode.Range
+  originalRange: vscode.Range
 ): Promise<vscode.TextEdit[] | undefined> {
-  const text: string = document.getText(range);
-  const mirroredDoc: MirroredDocument = getDocument(document);
-  const startIndex = document.offsetAt(range.start);
-  const endIndex = document.offsetAt(range.end);
-  const cursor = mirroredDoc.getTokenCursor(startIndex);
-  if (!cursor.withinString()) {
-    const rangeTuple: number[] = [startIndex, endIndex];
-    const newText: string | undefined = await _formatRange(
-      text,
-      document.getText(),
-      rangeTuple,
-      document.eol == 2 ? '\r\n' : '\n'
-    );
-    if (newText) {
-      return [vscode.TextEdit.replace(range, newText)];
-    }
+  const mirrorDoc = getDocument(document);
+  const startIndex = document.offsetAt(originalRange.start);
+  const cursor = mirrorDoc.getTokenCursor(startIndex);
+  if (!cursor.withinString() && !cursor.withinComment()) {
+    const eol = _convertEolNumToStringNotation(document.eol);
+    const originalText = document.getText(originalRange);
+    const leadingWs = originalText.match(/^\s*/)[0];
+    const trailingWs = originalText.match(/\s*$/)[0];
+    const missingTexts = cursorDocUtils.getMissingBrackets(originalText);
+    const healedText = `${missingTexts.prepend}${originalText.trim()}${missingTexts.append}`;
+    const formattedHealedText = await formatCode(healedText, document.eol);
+    const leadingEolPos = leadingWs.lastIndexOf(eol);
+    const startIndent =
+      leadingEolPos === -1
+        ? originalRange.start.character
+        : leadingWs.length - leadingEolPos - eol.length;
+    const formattedText = formattedHealedText
+      .substring(
+        missingTexts.prepend.length,
+        missingTexts.prepend.length + formattedHealedText.length - missingTexts.append.length
+      )
+      .split(eol)
+      .map((line: string, i: number) => (i === 0 ? line : `${' '.repeat(startIndent)}${line}`))
+      .join(eol);
+    const newText = `${formattedText.startsWith(leadingWs) ? '' : leadingWs}${formattedText}${
+      formattedText.endsWith(trailingWs) ? '' : trailingWs
+    }`;
+    return [vscode.TextEdit.replace(originalRange, newText)];
   }
 }
 
@@ -89,31 +103,29 @@ export async function formatPositionInfo(
   extraConfig = {}
 ) {
   const doc: vscode.TextDocument = editor.document;
-  const pos: vscode.Position = editor.selection.active;
-  const index = doc.offsetAt(pos);
-  const mirroredDoc: MirroredDocument = getDocument(doc);
-  const cursor = mirroredDoc.getTokenCursor(index);
-  const formatDepth = extraConfig['format-depth'] ? extraConfig['format-depth'] : 1;
-  const isComment = cursor.getFunctionName() === 'comment';
-  const config = { ...extraConfig, 'comment-form?': isComment };
-  let formatRange = cursor.rangeForList(formatDepth);
+  const index = doc.offsetAt(editor.selection.active);
+  const cursor = getDocument(doc).getTokenCursor(index);
+
+  const formatRange = _calculateFormatRange(extraConfig, cursor, index);
   if (!formatRange) {
-    formatRange = cursor.rangeForCurrentForm(index);
-    if (!formatRange || !formatRange.includes(index)) {
-      return;
-    }
+    return;
   }
+
   const formatted: {
     'range-text': string;
     range: number[];
     'new-index': number;
-  } = await _formatIndex(
+  } = formatIndex(
     doc.getText(),
     formatRange,
     index,
-    doc.eol == 2 ? '\r\n' : '\n',
+    _convertEolNumToStringNotation(doc.eol),
     onType,
-    config
+    {
+      ...(await config.getConfig()),
+      ...extraConfig,
+      'comment-form?': cursor.getFunctionName() === 'comment',
+    }
   );
   const range: vscode.Range = new vscode.Range(
     doc.positionAt(formatted.range[0]),
@@ -128,6 +140,56 @@ export async function formatPositionInfo(
     previousIndex: index,
     newIndex: newIndex,
   };
+}
+
+function _calculateFormatRange(
+  config: { 'format-depth'?: number },
+  cursor: LispTokenCursor,
+  index: number
+) {
+  const formatDepth = config?.['format-depth'] ?? _formatDepth(cursor);
+  const rangeForTopLevelForm = cursor.rangeForDefun(index, false);
+  const topLevelStartCursor = cursor.doc.getTokenCursor(rangeForTopLevelForm[0]);
+  const rangeForList = cursor.rangeForList(formatDepth);
+  if (rangeForList) {
+    if (rangeForList[0] === rangeForTopLevelForm[0]) {
+      if (topLevelStartCursor.rowCol[1] !== 0) {
+        const STOP_INFORMING = 'calvaFormat:stopInformingAboutTopLevelAlignment';
+        if (!state.extensionContext.globalState.get(STOP_INFORMING)) {
+          void vscode.window
+            .showInformationMessage(
+              'You are formatting a top level form that is not aligned with the left margin. Calva will not align it for you, because it promises to only format the content of the form. Please align the opening bracket of the form with the left margin and format again. You can also format the whole document by placing the cursor outside of the form and format.',
+              'OK',
+              "Don't show again"
+            )
+            .then((selection) => {
+              if (selection === "Don't show again") {
+                void state.extensionContext.globalState.update(STOP_INFORMING, true);
+              }
+            });
+        }
+      }
+    }
+    return rangeForList;
+  }
+
+  const rangeForCurrentForm = cursor.rangeForCurrentForm(index);
+  if (!isUndefined(rangeForCurrentForm)) {
+    if (rangeForCurrentForm[0] === rangeForTopLevelForm[0]) {
+      if (topLevelStartCursor.rowCol[1] !== 0) {
+        return;
+      }
+    }
+    if (rangeForCurrentForm.includes(index)) {
+      return rangeForCurrentForm;
+    }
+  }
+}
+
+function _formatDepth(cursor: LispTokenCursor) {
+  const cursorClone = cursor.clone();
+  cursorClone.backwardFunction(1);
+  return FormatDepthDefaults?.[cursorClone.getFunctionName()] ?? 1;
 }
 
 export async function formatPosition(
@@ -190,7 +252,7 @@ export function trimWhiteSpacePositionCommand(editor: vscode.TextEditor) {
 export async function formatCode(code: string, eol: number) {
   const d = {
     'range-text': code,
-    eol: eol == 2 ? '\r\n' : '\n',
+    eol: _convertEolNumToStringNotation(eol),
     config: await config.getConfig(),
   };
   const result = jsify(formatText(d));
@@ -199,30 +261,6 @@ export async function formatCode(code: string, eol: number) {
   } else {
     console.error('Error in `formatCode`:', result['error']);
     return code;
-  }
-}
-
-async function _formatIndex(
-  allText: string,
-  range: [number, number],
-  index: number,
-  eol: string,
-  onType: boolean = false,
-  extraConfig = {}
-): Promise<{ 'range-text': string; range: number[]; 'new-index': number }> {
-  const d = {
-    'all-text': allText,
-    idx: index,
-    eol: eol,
-    range: range,
-    config: { ...(await config.getConfig()), ...extraConfig },
-  };
-  const result = jsify(onType ? formatTextAtIdxOnType(d) : formatTextAtIdx(d));
-  if (!result['error']) {
-    return result;
-  } else {
-    console.error('Error in `_formatIndex`:', result['error']);
-    throw result['error'];
   }
 }
 
@@ -243,4 +281,8 @@ async function _formatRange(
   if (!result['error']) {
     return result['range-text'];
   }
+}
+
+function _convertEolNumToStringNotation(eol: vscode.EndOfLine) {
+  return eol == 2 ? '\r\n' : '\n';
 }

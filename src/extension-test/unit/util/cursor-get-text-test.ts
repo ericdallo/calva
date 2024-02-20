@@ -8,7 +8,7 @@ describe('get text', () => {
       const a = docFromTextNotation('(foo bar)•(deftest a-test•  (baz |gaz))');
       const b = docFromTextNotation('(foo bar)•(deftest |a-test|•  (baz gaz))');
       const range: [number, number] = [b.selection.anchor, b.selection.active];
-      expect(getText.currentTopLevelFunction(a, a.selection.active)).toEqual([
+      expect(getText.currentTopLevelDefined(a, a.selection.active)).toEqual([
         range,
         b.model.getText(...range),
       ]);
@@ -18,7 +18,7 @@ describe('get text', () => {
       const a = docFromTextNotation('(foo bar)•(with-test•  (deftest a-test•    (baz |gaz)))');
       const b = docFromTextNotation('(foo bar)•(with-test•  (deftest |a-test|•    (baz gaz)))');
       const range: [number, number] = [b.selection.anchor, b.selection.active];
-      expect(getText.currentTopLevelFunction(a, a.selection.active)).toEqual([
+      expect(getText.currentTopLevelDefined(a, a.selection.active)).toEqual([
         range,
         b.model.getText(...range),
       ]);
@@ -29,7 +29,7 @@ describe('get text', () => {
       const a = docFromTextNotation('(foo bar)•(with-test•  (t/deftest a-test•    (baz |gaz)))');
       const b = docFromTextNotation('(foo bar)•(with-test•  (t/deftest |a-test|•    (baz gaz)))');
       const range: [number, number] = [b.selection.anchor, b.selection.active];
-      expect(getText.currentTopLevelFunction(a, a.selection.active)).toEqual([
+      expect(getText.currentTopLevelDefined(a, a.selection.active)).toEqual([
         range,
         b.model.getText(...range),
       ]);
@@ -39,7 +39,7 @@ describe('get text', () => {
       const a = docFromTextNotation('(foo bar)•(deftest ^{:some :thing} a-test•  (baz |gaz))');
       const b = docFromTextNotation('(foo bar)•(deftest ^{:some :thing} |a-test|•  (baz gaz))');
       const range: [number, number] = [b.selection.anchor, b.selection.active];
-      expect(getText.currentTopLevelFunction(a, a.selection.active)).toEqual([
+      expect(getText.currentTopLevelDefined(a, a.selection.active)).toEqual([
         range,
         b.model.getText(...range),
       ]);
@@ -106,6 +106,18 @@ describe('get text', () => {
       expect(getText.startOfFileToCursor(a)).toEqual([
         range,
         `${b.model.getText(...range)}${trail}`,
+      ]);
+    });
+  });
+
+  describe('selectionAddingBrackets', () => {
+    it('Folds the missing brackets of the selection with brackets from the text behind the selection', () => {
+      const doc = docFromTextNotation('(a b) |(c {:d [1 2 3|] :e :f} d) [4 5 6]');
+      const range: [number, number] = [doc.selection.anchor, doc.selection.active];
+      const trail = ']})';
+      expect(getText.selectionAddingBrackets(doc)).toEqual([
+        range,
+        `${doc.model.getText(...range)}${trail}`,
       ]);
     });
   });

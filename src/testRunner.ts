@@ -1,11 +1,10 @@
 import * as vscode from 'vscode';
-import evaluate from './evaluate';
 import * as util from './utilities';
-import { disabledPrettyPrinter } from './printer';
+import * as string from './util/string';
 import * as outputWindow from './results-output/results-doc';
 import { NReplSession } from './nrepl';
 import * as cider from './nrepl/cider';
-import * as lsp from './lsp/types';
+import * as lsp from './lsp/definitions';
 import * as namespace from './namespace';
 import { getSession, updateReplSessionType } from './nrepl/repl-session';
 import * as getText from './util/get-text';
@@ -68,7 +67,7 @@ function upsertTest(
 // Cider 0.26 and 0.27 have an issue where context can be an empty array.
 // https://github.com/clojure-emacs/cider-nrepl/issues/728#issuecomment-996002988
 export function assertionName(result: cider.TestResult): string {
-  if (util.isNonEmptyString(result.context)) {
+  if (string.isNonEmptyString(result.context)) {
     return result.context;
   }
   return 'assertion';
@@ -170,7 +169,7 @@ function useTestExplorer(): boolean | undefined {
   return vscode.workspace.getConfiguration('calva').get('useTestExplorer');
 }
 
-function reportTests(
+async function reportTests(
   controller: vscode.TestController,
   session: NReplSession,
   possibleResults: cider.TestResults[]
@@ -207,11 +206,17 @@ function reportTests(
       const resultSet = result.results[ns];
       for (const test in resultSet) {
         for (const a of resultSet[test]) {
-          cider.cleanUpWhiteSpace(a);
-
           const messages = cider.detailedMessage(a);
-          if (messages) {
-            outputWindow.append(messages);
+
+          if (a.type == 'error') {
+            const stackTrace = await session.testStacktrace(ns, test, a.index);
+
+            outputWindow.saveStacktrace(stackTrace.stacktrace);
+            outputWindow.appendLine(messages, (_, afterResultLocation) => {
+              outputWindow.markLastStacktraceRange(afterResultLocation);
+            });
+          } else if (messages) {
+            outputWindow.appendLine(messages);
           }
 
           if (a.type === 'fail') {
@@ -223,7 +228,7 @@ function reportTests(
   }
 
   const summary = cider.totalSummary(results.map((r) => r.summary));
-  outputWindow.append('; ' + cider.summaryMessage(summary));
+  outputWindow.appendLine('; ' + cider.summaryMessage(summary));
 
   if (!useTestExplorer()) {
     for (const fileName in diagnostics) {
@@ -237,11 +242,11 @@ function reportTests(
 // FIXME: use cljs session where necessary
 async function runAllTests(controller: vscode.TestController, document = {}) {
   const session = getSession(util.getFileType(document));
-  outputWindow.append('; Running all project tests…');
+  outputWindow.appendLine('; Running all project tests…');
   try {
-    reportTests(controller, session, [await session.testAll()]);
+    await reportTests(controller, session, [await session.testAll()]);
   } catch (e) {
-    outputWindow.append('; ' + e);
+    outputWindow.appendLine('; ' + e);
   }
   updateReplSessionType();
   outputWindow.appendPrompt();
@@ -259,20 +264,15 @@ function runAllTestsCommand(controller: vscode.TestController) {
   });
 }
 
-async function considerTestNS(ns: string, session: NReplSession): Promise<string[]> {
-  if (!ns.endsWith('-test')) {
-    const testNS = ns + '-test';
-    const nsPath = await session.nsPath(testNS);
-    const testFilePath = nsPath.path;
-    if (testFilePath && testFilePath !== '') {
-      const filePath = vscode.Uri.parse(testFilePath).path;
-      const loadForms = `(load-file "${filePath}")`;
-      await session.eval(loadForms, testNS).value;
-    }
-
-    return [ns, testNS];
+async function loadTestNS(ns: string, session: NReplSession) {
+  const testNS = !ns.endsWith('-test') ? ns + '-test' : ns;
+  const nsPath = await session.nsPath(testNS);
+  const testFilePath = nsPath.path;
+  if (testFilePath && testFilePath !== '') {
+    const filePath = vscode.Uri.parse(testFilePath).path;
+    const loadForms = `(load-file "${filePath}")`;
+    await session.eval(loadForms, testNS).value;
   }
-  return [ns];
 }
 
 async function runNamespaceTestsImpl(
@@ -294,17 +294,19 @@ async function runNamespaceTestsImpl(
 
   const session = getSession(util.getFileType(document));
 
-  // TODO.marc: Should we be passing the `document` argument to `loadFile`?
-  await evaluate.loadFile({}, disabledPrettyPrinter);
-  outputWindow.append(`; Running tests for ${nss[0]}...`);
+  outputWindow.appendLine(
+    `; Running tests for the following namespaces:\n${
+      nss.map((item) => `;   ${item}`).join('\n') + '\n'
+    }`
+  );
 
   const resultPromises = nss.map((ns) => {
     return session.testNs(ns);
   });
   try {
-    reportTests(controller, session, await Promise.all(resultPromises));
+    await reportTests(controller, session, await Promise.all(resultPromises));
   } catch (e) {
-    outputWindow.append('; ' + e);
+    outputWindow.appendLine('; ' + e);
   }
 
   outputWindow.setSession(session, nss[0]);
@@ -318,34 +320,40 @@ async function runNamespaceTests(controller: vscode.TestController, document: vs
     return;
   }
   const session = getSession(util.getFileType(document));
-  const ns = namespace.getNamespace(doc);
-  const nss = await considerTestNS(ns, session);
-  void runNamespaceTestsImpl(controller, document, nss);
+  const [currentDocNs, _] = namespace.getNamespace(
+    doc,
+    vscode.window.activeTextEditor?.selection?.active
+  );
+  await loadTestNS(currentDocNs, session);
+  const namespacesToRunTestsFor = [
+    currentDocNs,
+    currentDocNs.endsWith('-test') ? currentDocNs.slice(0, -5) : currentDocNs + '-test',
+  ];
+  void runNamespaceTestsImpl(controller, document, namespacesToRunTestsFor);
 }
 
 function getTestUnderCursor() {
   const editor = util.tryToGetActiveTextEditor();
   if (editor) {
-    return getText.currentTopLevelFunction(editor?.document, editor?.selection.active)[1];
+    return getText.currentTopLevelDefined(editor?.document, editor?.selection.active)[1];
   }
 }
 
 async function runTestUnderCursor(controller: vscode.TestController) {
   const doc = util.tryToGetDocument({});
   const session = getSession(util.getFileType(doc));
-  const ns = namespace.getNamespace(doc);
+  const [ns, _] = namespace.getNamespace(doc, vscode.window.activeTextEditor?.selection?.active);
   const test = getTestUnderCursor();
 
   if (test) {
-    await evaluate.loadFile(doc, disabledPrettyPrinter);
-    outputWindow.append(`; Running test: ${test}…`);
+    outputWindow.appendLine(`; Running test: ${test}…`);
     try {
-      reportTests(controller, session, [await session.test(ns, test)]);
+      await reportTests(controller, session, [await session.test(ns, test)]);
     } catch (e) {
-      outputWindow.append('; ' + e);
+      outputWindow.appendLine('; ' + e);
     }
   } else {
-    outputWindow.append('; No test found at cursor');
+    outputWindow.appendLine('; No test found at cursor');
   }
   outputWindow.appendPrompt();
 }
@@ -376,13 +384,11 @@ function runNamespaceTestsCommand(controller: vscode.TestController) {
 
 async function rerunTests(controller: vscode.TestController, document = {}) {
   const session = getSession(util.getFileType(document));
-  await evaluate.loadFile({}, disabledPrettyPrinter);
-  outputWindow.append('; Running previously failed tests…');
-
+  outputWindow.appendLine('; Running previously failed tests…');
   try {
-    reportTests(controller, session, [await session.retest()]);
+    await reportTests(controller, session, [await session.retest()]);
   } catch (e) {
-    outputWindow.append('; ' + e);
+    outputWindow.appendLine('; ' + e);
   }
 
   outputWindow.appendPrompt();
